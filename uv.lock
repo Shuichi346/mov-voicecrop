@@ -506,14 +506,12 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "gradio" },
-    { name = "pillow" },
     { name = "python-dotenv" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "gradio", specifier = ">=6.9.0,<7.0.0" },
-    { name = "pillow", specifier = ">=10.0.0" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
 ]
 

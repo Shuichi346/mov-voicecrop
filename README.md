@@ -9,6 +9,7 @@
 - カット済み MP4、SRT、DaVinci Resolve 20 向け FCPXML 1.9 を生成
 - CLI と Gradio Web UI の両対応
 - `.env` と `settings.json` による設定管理
+- ハードウェアエンコード（h264_videotoolbox）の自動検出・利用
 
 ## セットアップ
 
@@ -51,7 +52,16 @@ uv run python main.py webui
 
 - `*_original.srt`: 元動画タイムライン基準の字幕
 - `*_cut.srt`: カット後タイムライン基準の字幕
-- `*_cut.mp4`: カット済み動画
+- `*_cut.mp4`: カット済み動画（字幕モード soft の場合はソフトサブ付き）
 - `*.fcpxml`: DaVinci Resolve 20 読み込み用 FCPXML
 
-字幕モードを `both` にした場合は、`*_cut_soft.mp4` と `*_cut_hard.mp4` を出力します。
+## 字幕モード
+
+- `soft`: ソフトサブ（プレイヤーでオン/オフ切替可能）
+- `off`: 字幕なし
+
+## 映像エンコーダー
+
+- `auto`（デフォルト）: Mac の h264_videotoolbox が利用可能なら自動で使用し、高速にエンコードします。利用できない場合は libx264 にフォールバックします。
+- `libx264`: CPU ソフトウェアエンコード
+- `h264_videotoolbox`: macOS ハードウェアエンコード

@@ -32,7 +32,7 @@ class AppConfig:
     padding: float = 0.15
     min_confidence: float = 0.35
     subtitle_mode: str = "soft"
-    video_encoder: str = "libx264"
+    video_encoder: str = "auto"
     gradio_server_name: str = "127.0.0.1"
     gradio_server_port: int = 7860
     output_dir: Path = DEFAULT_OUTPUT_DIR

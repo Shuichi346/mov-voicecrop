@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Callable
 
 from mov_voicecrop.config import AppConfig, load_config
@@ -48,16 +47,19 @@ def execute_pipeline(
     progress_callback: ProgressCallback | None = None,
 ) -> list[Path]:
     """共通の動画処理パイプラインを実行する。"""
+    from mov_voicecrop.exporter_mp4 import TEMP_DIR
+
     output_dir.mkdir(parents=True, exist_ok=True)
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
     _validate_runtime_paths(config)
 
     base_name = input_path.stem
     outputs: list[Path] = []
 
-    with TemporaryDirectory(prefix="mov_voicecrop_", dir=output_dir) as temp_dir_str:
-        temp_dir = Path(temp_dir_str)
-        wav_path = temp_dir / f"{base_name}.wav"
+    # 一時 WAV ファイルはプロジェクトの temp/ に保存する
+    wav_path = TEMP_DIR / f"{base_name}.wav"
 
+    try:
         _report_progress(progress_callback, 0.05, "メディア情報を取得しています")
         media = get_media_info(input_path)
 
@@ -111,6 +113,12 @@ def execute_pipeline(
             _report_progress(progress_callback, 0.95, "FCPXML を出力しています")
             fcpxml_path = output_dir / f"{base_name}.fcpxml"
             outputs.append(export_fcpxml(input_path, segments, media, fcpxml_path))
+    finally:
+        # 一時 WAV ファイルを削除する
+        wav_path.unlink(missing_ok=True)
+        # whisper.cpp の一時出力も削除する
+        for temp_file in TEMP_DIR.glob(f"{base_name}_whisper*"):
+            temp_file.unlink(missing_ok=True)
 
     _report_progress(progress_callback, 1.0, "処理が完了しました")
     return outputs
@@ -141,9 +149,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-confidence", type=float, default=None, help="最小信頼度")
     parser.add_argument(
         "--subtitle-mode",
-        choices=["soft", "hard", "both"],
+        choices=["soft", "off"],
         default=None,
-        help="字幕モード",
+        help="字幕モード（soft: ソフトサブ / off: 字幕なし）",
     )
     parser.add_argument("--whisper-cli", default=None, help="whisper-cli のパス")
     parser.add_argument("--whisper-model", default=None, help="Whisper モデルのパス")
@@ -151,9 +159,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--threads", type=int, default=None, help="whisper.cpp スレッド数")
     parser.add_argument(
         "--video-encoder",
-        choices=["libx264", "h264_videotoolbox"],
+        choices=["auto", "libx264", "h264_videotoolbox"],
         default=None,
-        help="MP4 映像エンコーダー",
+        help="MP4 映像エンコーダー（auto: HW利用可能なら自動選択）",
     )
     return parser
 

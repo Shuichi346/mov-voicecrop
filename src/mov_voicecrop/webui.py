@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 
 import gradio as gr
@@ -55,6 +57,17 @@ def _build_ui_config(
     )
 
 
+def _copy_outputs_to_tempdir(output_paths: list[Path]) -> list[str]:
+    """出力ファイルを tempdir にコピーして Gradio が安全に配信できるようにする。"""
+    temp_dir = Path(tempfile.mkdtemp(prefix="mov_voicecrop_result_"))
+    copied: list[str] = []
+    for src in output_paths:
+        dst = temp_dir / src.name
+        shutil.copy2(src, dst)
+        copied.append(str(dst))
+    return copied
+
+
 def launch_webui(config: AppConfig) -> None:
     """Web UI を起動する。"""
 
@@ -74,8 +87,8 @@ def launch_webui(config: AppConfig) -> None:
                 value="both",
             )
             subtitle_mode = gr.Radio(
-                choices=["soft", "hard", "both"],
-                label="字幕モード",
+                choices=["soft", "off"],
+                label="字幕モード（soft: ソフトサブ / off: なし）",
                 value=config.subtitle_mode,
             )
             process_button = gr.Button("処理開始", variant="primary")
@@ -143,8 +156,8 @@ def launch_webui(config: AppConfig) -> None:
 
             with gr.Accordion("出力設定", open=True):
                 video_encoder = gr.Dropdown(
-                    choices=["libx264", "h264_videotoolbox"],
-                    label="映像エンコーダー",
+                    choices=["auto", "libx264", "h264_videotoolbox"],
+                    label="映像エンコーダー（auto: HW利用可能なら自動選択）",
                     value=config.video_encoder,
                 )
 
@@ -200,7 +213,9 @@ def launch_webui(config: AppConfig) -> None:
                 config=runtime_config,
                 progress_callback=callback,
             )
-            return "\n".join(logs), [str(path) for path in outputs]
+
+            safe_paths = _copy_outputs_to_tempdir(outputs)
+            return "\n".join(logs), safe_paths
 
         def save_ui_settings(
             output_dir_value: str,

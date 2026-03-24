@@ -18,6 +18,8 @@ whisper.cpp/
 output/
 !output/.gitkeep
 
-# 一時ファイル
+# 一時ファイル（temp/ ディレクトリの中身）
+temp/*
+!temp/.gitkeep
 *.wav
 *.tmp
