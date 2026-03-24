@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Callable
 
-from mov_voicecrop.config import AppConfig, load_config
+from mov_voicecrop.config import AppConfig, PROJECT_ROOT, load_config
 from mov_voicecrop.exporter_fcpxml import export_fcpxml
 from mov_voicecrop.exporter_mp4 import export_mp4
 from mov_voicecrop.exporter_srt import export_srt
@@ -17,6 +19,7 @@ from mov_voicecrop.transcriber import transcribe
 
 
 ProgressCallback = Callable[[float, str], None]
+TEMP_ROOT = PROJECT_ROOT / "temp"
 
 
 def _report_progress(
@@ -39,6 +42,18 @@ def _validate_runtime_paths(config: AppConfig) -> None:
             raise FileNotFoundError(f"{label} が見つかりません: {path}")
 
 
+def _create_job_temp_dir(base_name: str) -> Path:
+    """ジョブごとの一時ディレクトリを作成する。"""
+    TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    safe_prefix = "".join(
+        char if char.isalnum() else "_"
+        for char in base_name
+    ).strip("_")
+    if not safe_prefix:
+        safe_prefix = "job"
+    return Path(tempfile.mkdtemp(prefix=f"{safe_prefix}_", dir=TEMP_ROOT))
+
+
 def execute_pipeline(
     input_path: Path,
     output_dir: Path,
@@ -47,17 +62,18 @@ def execute_pipeline(
     progress_callback: ProgressCallback | None = None,
 ) -> list[Path]:
     """共通の動画処理パイプラインを実行する。"""
-    from mov_voicecrop.exporter_mp4 import TEMP_DIR
+    if not input_path.exists():
+        raise FileNotFoundError(f"入力動画が見つかりません: {input_path}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    TEMP_DIR.mkdir(parents=True, exist_ok=True)
     _validate_runtime_paths(config)
 
     base_name = input_path.stem
+    job_temp_dir = _create_job_temp_dir(base_name)
     outputs: list[Path] = []
 
-    # 一時 WAV ファイルはプロジェクトの temp/ に保存する
-    wav_path = TEMP_DIR / f"{base_name}.wav"
+    # ジョブ専用ディレクトリに一時 WAV と whisper 出力をまとめる
+    wav_path = job_temp_dir / f"{base_name}.wav"
 
     try:
         _report_progress(progress_callback, 0.05, "メディア情報を取得しています")
@@ -78,7 +94,11 @@ def execute_pipeline(
         )
 
         _report_progress(progress_callback, 0.55, "無音区間を検出しています")
-        silence_regions = detect_silence(input_path, config)
+        silence_regions = detect_silence(
+            input_path,
+            config,
+            media_duration=float(media["duration"]),
+        )
 
         _report_progress(progress_callback, 0.70, "保持区間を統合しています")
         segments = analyze_segments(
@@ -100,12 +120,13 @@ def execute_pipeline(
             mp4_path = output_dir / f"{base_name}_cut.mp4"
             outputs.extend(
                 export_mp4(
-                    input_path,
-                    segments,
-                    cut_srt_path,
-                    mp4_path,
-                    config.subtitle_mode,
-                    config,
+                    input_path=input_path,
+                    segments=segments,
+                    srt_path=cut_srt_path,
+                    output_path=mp4_path,
+                    subtitle_mode=config.subtitle_mode,
+                    config=config,
+                    temp_dir=job_temp_dir,
                 )
             )
 
@@ -114,11 +135,7 @@ def execute_pipeline(
             fcpxml_path = output_dir / f"{base_name}.fcpxml"
             outputs.append(export_fcpxml(input_path, segments, media, fcpxml_path))
     finally:
-        # 一時 WAV ファイルを削除する
-        wav_path.unlink(missing_ok=True)
-        # whisper.cpp の一時出力も削除する
-        for temp_file in TEMP_DIR.glob(f"{base_name}_whisper*"):
-            temp_file.unlink(missing_ok=True)
+        shutil.rmtree(job_temp_dir, ignore_errors=True)
 
     _report_progress(progress_callback, 1.0, "処理が完了しました")
     return outputs

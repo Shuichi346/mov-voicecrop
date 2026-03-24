@@ -11,8 +11,16 @@ from xml.dom import minidom
 
 
 def _parse_fps_rational(value: str) -> tuple[int, int]:
-    numerator, denominator = value.split("/", maxsplit=1)
-    return int(numerator), int(denominator)
+    """fps の有理数文字列を安全に解析する。"""
+    try:
+        numerator, denominator = value.split("/", maxsplit=1)
+        fps_num = int(numerator)
+        fps_den = int(denominator)
+        if fps_num <= 0 or fps_den <= 0:
+            return 30, 1
+        return fps_num, fps_den
+    except (AttributeError, ValueError):
+        return 30, 1
 
 
 def _fraction_to_string(value: Fraction) -> str:
@@ -23,16 +31,34 @@ def _fraction_to_string(value: Fraction) -> str:
     return f"{value.numerator}/{value.denominator}s"
 
 
+def _audio_rate_label(sample_rate: int) -> str:
+    """サンプルレートを FCPXML 向け表記へ変換する。"""
+    known_labels = {
+        32000: "32k",
+        44100: "44.1k",
+        48000: "48k",
+        88200: "88.2k",
+        96000: "96k",
+        176400: "176.4k",
+        192000: "192k",
+    }
+    if sample_rate in known_labels:
+        return known_labels[sample_rate]
+    if sample_rate > 0:
+        return f"{sample_rate / 1000:g}k"
+    return "48k"
+
+
 def seconds_to_rational(seconds: float, fps_rational: str) -> str:
     """秒を FCPXML の有理数表記へ変換する。"""
     if seconds <= 0:
         return "0s"
 
     fps_num, fps_den = _parse_fps_rational(fps_rational)
-    if fps_num == 0:
-        return _fraction_to_string(Fraction(seconds).limit_denominator(30_000 * 1001))
-
     frame_count = round(seconds * fps_num / fps_den)
+    if frame_count <= 0:
+        return _fraction_to_string(Fraction(str(seconds)).limit_denominator(30_000 * 1001))
+
     return _fraction_to_string(Fraction(frame_count * fps_den, fps_num))
 
 
@@ -52,12 +78,17 @@ def export_fcpxml(
 ) -> Path:
     """DaVinci Resolve 20 読み込み向け FCPXML を生成する。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fps_rational = str(media_info["fps_rational"])
+
+    fps_rational = str(media_info.get("fps_rational", "30/1"))
     fps_num, fps_den = _parse_fps_rational(fps_rational)
     frame_duration = f"{fps_den}/{fps_num}s"
+
     asset_uid = uuid.uuid4().hex.upper()
-    sample_rate = int(media_info["audio_sample_rate"])
-    audio_rate_label = f"{sample_rate / 1000:g}k" if sample_rate else "48k"
+    sample_rate = int(media_info.get("audio_sample_rate", 0) or 0)
+    audio_rate_label = _audio_rate_label(sample_rate)
+    audio_channels = int(media_info.get("audio_channels", 0) or 2)
+    audio_layout = "mono" if audio_channels == 1 else "stereo"
+
     total_cut_duration = sum(
         max(0.0, float(segment["end"]) - float(segment["start"]))
         for segment in segments
@@ -65,12 +96,16 @@ def export_fcpxml(
 
     root = element_tree.Element("fcpxml", version="1.9")
     resources = element_tree.SubElement(root, "resources")
+
     element_tree.SubElement(
         resources,
         "format",
         {
             "id": "r1",
-            "name": f"FFVideoFormat{media_info['height']}p{round(float(media_info['fps']) or 30)}",
+            "name": (
+                f"FFVideoFormat{media_info['height']}p"
+                f"{round(float(media_info['fps']) or 30)}"
+            ),
             "frameDuration": frame_duration,
             "width": str(media_info["width"]),
             "height": str(media_info["height"]),
@@ -90,10 +125,11 @@ def export_fcpxml(
             "format": "r1",
             "hasAudio": "1",
             "audioSources": "1",
-            "audioChannels": str(media_info["audio_channels"]),
-            "audioRate": str(sample_rate),
+            "audioChannels": str(audio_channels),
+            "audioRate": audio_rate_label,
         },
     )
+
     element_tree.SubElement(
         asset,
         "media-rep",
@@ -118,7 +154,7 @@ def export_fcpxml(
             "duration": seconds_to_rational(total_cut_duration, fps_rational),
             "tcStart": "0s",
             "tcFormat": "NDF",
-            "audioLayout": "stereo",
+            "audioLayout": audio_layout,
             "audioRate": audio_rate_label,
         },
     )

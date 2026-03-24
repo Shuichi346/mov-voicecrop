@@ -16,7 +16,11 @@ SILENCE_END_PATTERN = re.compile(
 )
 
 
-def detect_silence(video_path: Path, config: AppConfig) -> list[dict[str, float]]:
+def detect_silence(
+    video_path: Path,
+    config: AppConfig,
+    media_duration: float | None = None,
+) -> list[dict[str, float]]:
     """ffmpeg silencedetect で無音区間を抽出する。"""
     command = [
         "ffmpeg",
@@ -45,8 +49,13 @@ def detect_silence(video_path: Path, config: AppConfig) -> list[dict[str, float]
             "ffmpeg が見つかりません。ffmpeg をインストールしてください: brew install ffmpeg"
         ) from error
 
-    stderr = completed.stderr
-    media_duration = get_media_info(video_path)["duration"]
+    stderr = completed.stderr.strip()
+    if completed.returncode != 0:
+        raise RuntimeError(f"ffmpeg silencedetect の実行に失敗しました: {stderr}")
+
+    if media_duration is None:
+        media_duration = float(get_media_info(video_path)["duration"])
+
     regions: list[dict[str, float]] = []
     current_start: float | None = None
 
@@ -78,6 +87,4 @@ def detect_silence(video_path: Path, config: AppConfig) -> list[dict[str, float]
             }
         )
 
-    total_silence = sum(region["duration"] for region in regions)
-    print(f"無音区間: {len(regions)} 個 / 合計 {total_silence:.2f} 秒")
     return regions

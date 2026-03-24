@@ -26,7 +26,7 @@ class AppConfig:
     whisper_model_path: Path = PROJECT_ROOT / "whisper.cpp" / "models" / "ggml-large-v3-turbo.bin"
     whisper_vad_model_path: Path = PROJECT_ROOT / "whisper.cpp" / "models" / "ggml-silero-v6.2.0.bin"
     language: str = "ja"
-    whisper_threads: int = 4
+    whisper_threads: int = 8
     silence_thresh_db: float = -35.0
     min_silence_duration: float = 0.5
     padding: float = 0.15
