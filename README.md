@@ -6,7 +6,7 @@
 
 - `whisper.cpp` と Silero VAD による文字起こし
 - `ffmpeg silencedetect` による無音検出
-- カット済み MP4、SRT、DaVinci Resolve 20 向け FCPXML 1.9 を生成
+- カット済み MP4、SRT、Final Cut Pro / DaVinci Resolve 向け FCPXML 1.14 を生成
 - CLI と Gradio Web UI の両対応
 - `.env` と `settings.json` による設定管理
 - ハードウェアエンコード（h264_videotoolbox）の自動検出・利用
