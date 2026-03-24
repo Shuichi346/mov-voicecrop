@@ -27,6 +27,10 @@ chmod +x scripts/setup_whisper.sh
 
 3. 必要なら `.env.example` を `.env` にコピーして調整します。
 
+```bash
+cp .env.example .env
+```
+
 ## 使い方
 
 CLI:
