@@ -30,7 +30,7 @@ body {
 """
 
 # 出力ディレクトリ未指定を表すプレースホルダー
-_OUTPUT_DIR_AUTO = "（入力動画と同じディレクトリ）"
+_OUTPUT_DIR_AUTO = "（入力動画と同じディレクトリに出力）"
 
 
 def _build_ui_config(
@@ -96,7 +96,10 @@ def launch_webui(config: AppConfig) -> None:
         gr.Markdown("動画から発話区間だけを残し、字幕付き MP4 / SRT / FCPXML を生成します。")
 
         with gr.Tab("メイン処理"):
-            input_video = gr.File(label="入力動画", type="filepath")
+            input_video_path = gr.Textbox(
+                label="入力動画のパス",
+                placeholder="/Users/username/Movies/input.mp4",
+            )
             output_dir = gr.Textbox(
                 label="出力ディレクトリ（空欄で入力動画と同じディレクトリに出力）",
                 value=_output_dir_display(config),
@@ -184,8 +187,8 @@ def launch_webui(config: AppConfig) -> None:
             save_button = gr.Button("設定を保存")
             save_status = gr.Textbox(label="保存結果", interactive=False)
 
-        def on_input_video_change(input_video_path: str | None, current_output_dir: str) -> str:
-            """入力動画が変更されたとき、出力ディレクトリがデフォルト状態なら自動更新する。"""
+        def on_input_path_change(raw_path: str, current_output_dir: str) -> str:
+            """入力パスが変更されたとき、出力ディレクトリがデフォルト状態なら自動更新する。"""
             is_default = (
                 not current_output_dir.strip()
                 or current_output_dir.strip() == _OUTPUT_DIR_AUTO
@@ -193,18 +196,23 @@ def launch_webui(config: AppConfig) -> None:
             if not is_default:
                 return current_output_dir
 
-            if input_video_path:
-                return str(Path(input_video_path).expanduser().resolve().parent)
+            cleaned = raw_path.strip()
+            if not cleaned:
+                return _OUTPUT_DIR_AUTO
+
+            path = Path(cleaned).expanduser()
+            if path.suffix and path.parent != path:
+                return str(path.resolve().parent)
             return _OUTPUT_DIR_AUTO
 
-        input_video.change(
-            fn=on_input_video_change,
-            inputs=[input_video, output_dir],
+        input_video_path.change(
+            fn=on_input_path_change,
+            inputs=[input_video_path, output_dir],
             outputs=output_dir,
         )
 
-        def process_uploaded_video(
-            input_video_path: str | None,
+        def process_video(
+            raw_input_path: str,
             output_dir_value: str,
             style_value: str,
             subtitle_mode_value: str,
@@ -220,8 +228,15 @@ def launch_webui(config: AppConfig) -> None:
             video_encoder_value: str,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[str, list[str]]:
-            if not input_video_path:
-                raise gr.Error("入力動画を指定してください。")
+            if not raw_input_path or not raw_input_path.strip():
+                raise gr.Error("入力動画のパスを指定してください。")
+
+            input_path = Path(raw_input_path.strip()).expanduser().resolve()
+
+            if not input_path.exists():
+                raise gr.Error(f"入力動画が見つかりません: {input_path}")
+            if not input_path.is_file():
+                raise gr.Error(f"指定されたパスはファイルではありません: {input_path}")
 
             runtime_config = _build_ui_config(
                 config,
@@ -239,10 +254,11 @@ def launch_webui(config: AppConfig) -> None:
                 video_encoder=video_encoder_value,
             )
 
-            input_path = Path(input_video_path).expanduser().resolve()
             effective_output_dir = resolve_output_dir(runtime_config, input_path)
 
             logs: list[str] = []
+            logs.append(f"入力: {input_path}")
+            logs.append(f"出力先: {effective_output_dir}")
 
             def callback(current_progress: float, message: str) -> None:
                 logs.append(message)
@@ -292,9 +308,9 @@ def launch_webui(config: AppConfig) -> None:
             return f"設定を保存しました: {saved_path}"
 
         process_button.click(
-            fn=process_uploaded_video,
+            fn=process_video,
             inputs=[
-                input_video,
+                input_video_path,
                 output_dir,
                 style,
                 subtitle_mode,

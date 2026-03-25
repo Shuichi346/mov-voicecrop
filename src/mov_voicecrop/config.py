@@ -169,7 +169,7 @@ def _cli_to_dict(cli_args: argparse.Namespace | None) -> dict[str, Any]:
         if value is None:
             continue
         config_key = CLI_ARG_MAP.get(key, key)
-        if config_key in {f.name for f in AppConfig.__dataclass_fields__.values()}:
+        if config_key in AppConfig.__dataclass_fields__:
             cli_values[config_key] = _coerce_value(config_key, value)
     return cli_values
 
@@ -180,8 +180,7 @@ def load_config(cli_args: argparse.Namespace | None = None) -> AppConfig:
     output_dir は .env / settings.json / CLI のいずれかで明示指定されない限り
     None のまま保持し、実行時に入力動画の親ディレクトリをデフォルトとして使う。
     """
-    defaults = asdict(AppConfig())
-    merged: dict[str, Any] = dict(defaults)
+    merged: dict[str, Any] = asdict(AppConfig())
 
     for source in (_collect_env_values(), load_settings(), _cli_to_dict(cli_args)):
         for key, value in source.items():
