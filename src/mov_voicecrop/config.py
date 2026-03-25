@@ -36,7 +36,7 @@ class AppConfig:
     language: str = "ja"
     whisper_threads: int = 8
     silence_thresh_db: float = -35.0
-    min_silence_duration: float = 0.5
+    min_silence_duration: float = 0.25
     padding: float = 0.15
     min_confidence: float = 0.35
     subtitle_mode: str = "soft"

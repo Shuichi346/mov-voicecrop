@@ -2,9 +2,36 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
 from typing import Any
 
 from mov_voicecrop.config import AppConfig
+
+
+def _parse_fps_rational(value: str) -> tuple[int, int]:
+    """fps の有理数文字列を安全に解析する。"""
+    try:
+        numerator, denominator = value.split("/", maxsplit=1)
+        fps_num = int(numerator)
+        fps_den = int(denominator)
+        if fps_num <= 0 or fps_den <= 0:
+            return 30, 1
+        return fps_num, fps_den
+    except (AttributeError, ValueError):
+        return 30, 1
+
+
+def _seconds_to_frame_index(seconds: float, fps_num: int, fps_den: int) -> int:
+    """秒を最も近いフレーム番号へ変換する。"""
+    frames = Fraction(str(max(0.0, seconds))) * Fraction(fps_num, fps_den)
+    return int(frames + Fraction(1, 2))
+
+
+def _frame_index_to_seconds(frame_index: int, fps_num: int, fps_den: int) -> float:
+    """フレーム番号を秒へ変換する。"""
+    if frame_index <= 0:
+        return 0.0
+    return float(Fraction(frame_index * fps_den, fps_num))
 
 
 def _clip_interval_by_silence(
@@ -52,11 +79,50 @@ def _merge_text(current_text: str, next_text: str) -> str:
     return f"{current_text}\n{next_text}"
 
 
+def _normalize_to_frame_grid(
+    segments: list[dict[str, Any]],
+    media_duration: float,
+    fps_rational: str,
+) -> list[dict[str, Any]]:
+    """セグメント境界をフレーム単位へ正規化する。"""
+    if not segments:
+        return []
+
+    fps_num, fps_den = _parse_fps_rational(fps_rational)
+    media_end_frame = _seconds_to_frame_index(media_duration, fps_num, fps_den)
+
+    normalized: list[dict[str, Any]] = []
+    previous_end_frame = 0
+
+    for raw_segment in sorted(segments, key=lambda item: float(item["start"])):
+        start_seconds = float(raw_segment["start"])
+        end_seconds = float(raw_segment["end"])
+
+        start_frame = _seconds_to_frame_index(start_seconds, fps_num, fps_den)
+        end_frame = _seconds_to_frame_index(end_seconds, fps_num, fps_den)
+
+        start_frame = max(previous_end_frame, start_frame)
+        end_frame = min(media_end_frame, max(start_frame + 1, end_frame))
+
+        if end_frame <= start_frame:
+            continue
+
+        segment = raw_segment.copy()
+        segment["start"] = _frame_index_to_seconds(start_frame, fps_num, fps_den)
+        segment["end"] = _frame_index_to_seconds(end_frame, fps_num, fps_den)
+        normalized.append(segment)
+
+        previous_end_frame = end_frame
+
+    return normalized
+
+
 def analyze_segments(
     whisper_segments: list[dict[str, Any]],
     silence_regions: list[dict[str, float]],
     media_duration: float,
     config: AppConfig,
+    fps_rational: str = "30/1",
 ) -> list[dict[str, Any]]:
     """whisper と無音検出結果を統合して保持区間を返す。"""
     valid_segments: list[dict[str, Any]] = []
@@ -116,4 +182,8 @@ def analyze_segments(
     for segment in merged_segments:
         segment.pop("avg_token_prob", None)
 
-    return merged_segments
+    return _normalize_to_frame_grid(
+        merged_segments,
+        media_duration=media_duration,
+        fps_rational=fps_rational,
+    )

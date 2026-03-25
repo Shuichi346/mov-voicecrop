@@ -77,7 +77,6 @@ def execute_pipeline(
     job_temp_dir = _create_job_temp_dir(base_name)
     outputs: list[Path] = []
 
-    # ジョブ専用ディレクトリに一時 WAV と whisper 出力をまとめる
     wav_path = job_temp_dir / f"{base_name}.wav"
 
     try:
@@ -107,10 +106,11 @@ def execute_pipeline(
 
         _report_progress(progress_callback, 0.70, "保持区間を統合しています")
         segments = analyze_segments(
-            whisper_segments,
-            silence_regions,
-            float(media["duration"]),
-            config,
+            whisper_segments=whisper_segments,
+            silence_regions=silence_regions,
+            media_duration=float(media["duration"]),
+            config=config,
+            fps_rational=str(media.get("fps_rational", "30/1")),
         )
 
         original_srt_path = output_dir / f"{base_name}_original.srt"
@@ -173,7 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--subtitle-mode",
         choices=["soft", "off"],
         default=None,
-        help="字幕モード（soft: ソフトサブ / off: 字幕なし）",
+        help="字幕モード（soft: ソフトサブ / off: なし）",
     )
     parser.add_argument("--whisper-cli", default=None, help="whisper-cli のパス")
     parser.add_argument("--whisper-model", default=None, help="Whisper モデルのパス")
