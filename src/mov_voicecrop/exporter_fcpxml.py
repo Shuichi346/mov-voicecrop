@@ -7,6 +7,7 @@ import xml.etree.ElementTree as element_tree
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 from xml.dom import minidom
 
 
@@ -49,6 +50,18 @@ def _audio_rate_label(sample_rate: int) -> str:
     return "48k"
 
 
+def _path_to_file_uri(path: Path) -> str:
+    """パスを DaVinci Resolve 互換の file URI に変換する。
+
+    Python の Path.as_uri() は RFC 8089 準拠だが、DaVinci Resolve は
+    $, #, &, @ 等の特殊文字を含む URI を正しく解釈できないことがある。
+    urllib.parse.quote でパス各部分を確実にパーセントエンコードする。
+    """
+    absolute_path = str(path.resolve())
+    encoded_path = quote(absolute_path, safe="/")
+    return f"file://{encoded_path}"
+
+
 def seconds_to_rational(seconds: float, fps_rational: str) -> str:
     """秒を FCPXML の有理数表記へ変換する。"""
     if seconds <= 0:
@@ -60,6 +73,43 @@ def seconds_to_rational(seconds: float, fps_rational: str) -> str:
         return _fraction_to_string(Fraction(str(seconds)).limit_denominator(30_000 * 1001))
 
     return _fraction_to_string(Fraction(frame_count * fps_den, fps_num))
+
+
+def _sanitize_name(name: str) -> str:
+    """DaVinci Resolve のファイル検索で問題を起こす特殊文字を除去する。
+
+    Resolve はクリップ名をファイル名と照合して再リンクを試みるため、
+    name 属性に XML/URI で問題になる文字が含まれると検索に失敗する。
+    元のファイル名から問題文字を置換して安全な表示名を作成する。
+    """
+    replacements = {
+        "$": "",
+        "#": "",
+        "&": "and",
+        "@": "",
+        "!": "",
+        "%": "",
+        "^": "",
+        "=": "-",
+        "+": "",
+        "{": "(",
+        "}": ")",
+        "[": "(",
+        "]": ")",
+        "|": "-",
+        "\\": "-",
+        "<": "",
+        ">": "",
+        "`": "",
+        "~": "",
+    }
+    result = name
+    for char, replacement in replacements.items():
+        result = result.replace(char, replacement)
+    # 連続するスペースを1つにまとめる
+    while "  " in result:
+        result = result.replace("  ", " ")
+    return result.strip()
 
 
 def _pretty_xml(root: element_tree.Element) -> str:
@@ -89,6 +139,9 @@ def export_fcpxml(
     audio_channels = int(media_info.get("audio_channels", 0) or 2)
     audio_layout = "mono" if audio_channels == 1 else "stereo"
 
+    original_filename = str(media_info["filename"])
+    safe_clip_name = _sanitize_name(original_filename)
+
     total_cut_duration = sum(
         max(0.0, float(segment["end"]) - float(segment["start"]))
         for segment in segments
@@ -117,7 +170,7 @@ def export_fcpxml(
         "asset",
         {
             "id": "r2",
-            "name": str(media_info["filename"]),
+            "name": safe_clip_name,
             "uid": asset_uid,
             "start": "0s",
             "duration": seconds_to_rational(float(media_info["duration"]), fps_rational),
@@ -135,7 +188,7 @@ def export_fcpxml(
         "media-rep",
         {
             "kind": "original-media",
-            "src": video_path.resolve().as_uri(),
+            "src": _path_to_file_uri(video_path),
         },
     )
 
@@ -144,7 +197,7 @@ def export_fcpxml(
     project = element_tree.SubElement(
         event,
         "project",
-        {"name": f"{media_info['filename']}_cut"},
+        {"name": f"{safe_clip_name}_cut"},
     )
     sequence = element_tree.SubElement(
         project,
@@ -172,7 +225,7 @@ def export_fcpxml(
             {
                 "ref": "r2",
                 "offset": seconds_to_rational(timeline_offset, fps_rational),
-                "name": str(media_info["filename"]),
+                "name": safe_clip_name,
                 "start": seconds_to_rational(float(segment["start"]), fps_rational),
                 "duration": seconds_to_rational(clip_duration, fps_rational),
                 "tcFormat": "NDF",
