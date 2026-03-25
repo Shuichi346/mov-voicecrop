@@ -41,6 +41,7 @@ class AppConfig:
     min_confidence: float = 0.35
     subtitle_mode: str = "soft"
     video_encoder: str = "auto"
+    fcpxml_target: str = "resolve"
     gradio_server_name: str = "127.0.0.1"
     gradio_server_port: int = 7860
     output_dir: Path | None = None
@@ -58,6 +59,7 @@ PERSISTENT_KEYS = {
     "min_confidence",
     "subtitle_mode",
     "video_encoder",
+    "fcpxml_target",
     "gradio_server_name",
     "gradio_server_port",
     "output_dir",
@@ -76,6 +78,7 @@ ENV_KEY_MAP = {
     "MIN_AVG_LOGPROB": "min_confidence",
     "SUBTITLE_MODE": "subtitle_mode",
     "VIDEO_ENCODER": "video_encoder",
+    "FCPXML_TARGET": "fcpxml_target",
     "GRADIO_SERVER_NAME": "gradio_server_name",
     "GRADIO_SERVER_PORT": "gradio_server_port",
     "OUTPUT_DIR": "output_dir",

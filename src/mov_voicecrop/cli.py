@@ -139,7 +139,15 @@ def execute_pipeline(
         if style in {"xml", "both"}:
             _report_progress(progress_callback, 0.95, "FCPXML を出力しています")
             fcpxml_path = output_dir / f"{base_name}.fcpxml"
-            outputs.append(export_fcpxml(input_path, segments, media, fcpxml_path))
+            outputs.extend(
+                export_fcpxml(
+                    video_path=input_path,
+                    segments=segments,
+                    media_info=media,
+                    output_path=fcpxml_path,
+                    target=config.fcpxml_target,
+                )
+            )
     finally:
         shutil.rmtree(job_temp_dir, ignore_errors=True)
 
@@ -185,6 +193,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["auto", "libx264", "h264_videotoolbox"],
         default=None,
         help="MP4 映像エンコーダー（auto: HW利用可能なら自動選択）",
+    )
+    parser.add_argument(
+        "--fcpxml-target",
+        choices=["resolve", "fcp", "both"],
+        default=None,
+        help="FCPXML 出力ターゲット（resolve / fcp / both）",
     )
     return parser
 

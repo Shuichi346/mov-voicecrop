@@ -1,4 +1,4 @@
-"""FCPXML エクスポーター（DaVinci Resolve 20 向け）。"""
+"""FCPXML エクスポーター。"""
 
 from __future__ import annotations
 
@@ -6,9 +6,12 @@ import uuid
 import xml.etree.ElementTree as element_tree
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 from xml.dom import minidom
+
+
+FCPXMLTarget = Literal["resolve", "fcp", "both"]
 
 
 def _parse_fps_rational(value: str) -> tuple[int, int]:
@@ -57,13 +60,6 @@ def _seconds_to_frame_index(seconds: float, fps_num: int, fps_den: int) -> int:
     return int(frames + Fraction(1, 2))
 
 
-def _frame_index_to_fraction(frame_index: int, fps_num: int, fps_den: int) -> Fraction:
-    """フレーム番号を秒の Fraction に変換する。"""
-    if frame_index <= 0:
-        return Fraction(0, 1)
-    return Fraction(frame_index * fps_den, fps_num)
-
-
 def _frame_count_to_fraction(frame_count: int, fps_num: int, fps_den: int) -> Fraction:
     """フレーム数を秒の Fraction に変換する。"""
     if frame_count <= 0:
@@ -72,6 +68,7 @@ def _frame_count_to_fraction(frame_count: int, fps_num: int, fps_den: int) -> Fr
 
 
 def _pretty_xml(root: element_tree.Element) -> str:
+    """見やすい XML 文字列へ整形する。"""
     rough = element_tree.tostring(root, encoding="utf-8")
     parsed = minidom.parseString(rough)
     pretty = parsed.toprettyxml(indent="    ", encoding="UTF-8").decode("utf-8")
@@ -79,10 +76,19 @@ def _pretty_xml(root: element_tree.Element) -> str:
     return "\n".join([lines[0], "<!DOCTYPE fcpxml>", *lines[1:]])
 
 
-def _file_url_for_resolve(video_path: Path) -> str:
-    """DaVinci Resolve が読み取りやすい file URL を生成する。"""
+def _file_url(video_path: Path) -> str:
+    """FCPXML 用の file URL を生成する。"""
     resolved = video_path.expanduser().resolve()
     return f"file://{quote(str(resolved), safe='/')}"
+
+
+def _audio_layout_label(audio_channels: int) -> str:
+    """チャンネル数に応じた audioLayout を返す。"""
+    if audio_channels <= 1:
+        return "mono"
+    if audio_channels == 2:
+        return "stereo"
+    return "surround"
 
 
 def _resolve_asset_frame_count(
@@ -90,7 +96,7 @@ def _resolve_asset_frame_count(
     fps_num: int,
     fps_den: int,
 ) -> int:
-    """アセット全体の実フレーム数を決定する。"""
+    """アセット全体のフレーム数を決定する。"""
     frame_count = int(media_info.get("frame_count", 0) or 0)
     if frame_count > 0:
         return frame_count
@@ -98,6 +104,56 @@ def _resolve_asset_frame_count(
     duration_seconds = float(media_info.get("duration", 0.0) or 0.0)
     estimated = _seconds_to_frame_index(duration_seconds, fps_num, fps_den)
     return max(0, estimated)
+
+
+def _build_asset(
+    resources: element_tree.Element,
+    variant: Literal["resolve", "fcp"],
+    asset_id: str,
+    asset_name: str,
+    asset_uid: str,
+    asset_duration: str,
+    format_id: str,
+    audio_channels: int,
+    audio_rate_label: str,
+    asset_url: str,
+) -> None:
+    """variant ごとの asset 要素を生成する。"""
+    common_attrs = {
+        "id": asset_id,
+        "name": asset_name,
+        "uid": asset_uid,
+        "start": "0s",
+        "duration": asset_duration,
+        "hasVideo": "1",
+        "format": format_id,
+        "hasAudio": "1",
+        "audioSources": "1",
+        "audioChannels": str(audio_channels),
+        "audioRate": audio_rate_label,
+    }
+
+    if variant == "resolve":
+        element_tree.SubElement(
+            resources,
+            "asset",
+            {
+                **common_attrs,
+                "src": asset_url,
+            },
+        )
+        return
+
+    asset = element_tree.SubElement(resources, "asset", common_attrs)
+    element_tree.SubElement(
+        asset,
+        "media-rep",
+        {
+            "kind": "original-media",
+            "src": asset_url,
+            "suggestedFilename": asset_name,
+        },
+    )
 
 
 def _build_spine_clips(
@@ -141,13 +197,14 @@ def _build_spine_clips(
                 ),
                 "name": clip_name,
                 "start": _fraction_to_string(
-                    _frame_index_to_fraction(start_frame, fps_num, fps_den)
+                    _frame_count_to_fraction(start_frame, fps_num, fps_den)
                 ),
                 "duration": _fraction_to_string(
                     _frame_count_to_fraction(clip_frames, fps_num, fps_den)
                 ),
                 "tcFormat": "NDF",
                 "enabled": "1",
+                "audioRole": "dialogue",
             },
         )
 
@@ -157,13 +214,21 @@ def _build_spine_clips(
     return total_timeline_frames
 
 
-def export_fcpxml(
+def _variant_version(variant: Literal["resolve", "fcp"]) -> str:
+    """variant ごとの FCPXML version を返す。"""
+    if variant == "fcp":
+        return "1.13"
+    return "1.10"
+
+
+def _build_single_fcpxml(
     video_path: Path,
     segments: list[dict[str, Any]],
     media_info: dict[str, Any],
     output_path: Path,
+    variant: Literal["resolve", "fcp"],
 ) -> Path:
-    """DaVinci Resolve 20 読み込み向け FCPXML を生成する。"""
+    """variant ごとの FCPXML を1本生成する。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fps_rational = str(media_info.get("fps_rational", "30/1"))
@@ -172,14 +237,17 @@ def export_fcpxml(
 
     asset_uid = uuid.uuid4().hex.upper()
     sample_rate = int(media_info.get("audio_sample_rate", 0) or 0)
-    audio_rate_label = _audio_rate_label(sample_rate)
+    audio_rate = _audio_rate_label(sample_rate)
     audio_channels = int(media_info.get("audio_channels", 0) or 2)
-    audio_layout = "mono" if audio_channels == 1 else "stereo"
-    clip_name = video_path.name
-    asset_src = _file_url_for_resolve(video_path)
+    audio_layout = _audio_layout_label(audio_channels)
+    asset_name = video_path.name
+    asset_url = _file_url(video_path)
     asset_total_frames = _resolve_asset_frame_count(media_info, fps_num, fps_den)
+    asset_duration = _fraction_to_string(
+        _frame_count_to_fraction(asset_total_frames, fps_num, fps_den)
+    )
 
-    root = element_tree.Element("fcpxml", version="1.10")
+    root = element_tree.Element("fcpxml", version=_variant_version(variant))
     resources = element_tree.SubElement(root, "resources")
 
     element_tree.SubElement(
@@ -197,25 +265,17 @@ def export_fcpxml(
         },
     )
 
-    element_tree.SubElement(
-        resources,
-        "asset",
-        {
-            "id": "r2",
-            "name": clip_name,
-            "uid": asset_uid,
-            "src": asset_src,
-            "start": "0s",
-            "duration": _fraction_to_string(
-                _frame_count_to_fraction(asset_total_frames, fps_num, fps_den)
-            ),
-            "hasVideo": "1",
-            "format": "r1",
-            "hasAudio": "1",
-            "audioSources": "1",
-            "audioChannels": str(audio_channels),
-            "audioRate": audio_rate_label,
-        },
+    _build_asset(
+        resources=resources,
+        variant=variant,
+        asset_id="r2",
+        asset_name=asset_name,
+        asset_uid=asset_uid,
+        asset_duration=asset_duration,
+        format_id="r1",
+        audio_channels=audio_channels,
+        audio_rate_label=audio_rate,
+        asset_url=asset_url,
     )
 
     library = element_tree.SubElement(root, "library")
@@ -233,7 +293,7 @@ def export_fcpxml(
             "tcStart": "0s",
             "tcFormat": "NDF",
             "audioLayout": audio_layout,
-            "audioRate": audio_rate_label,
+            "audioRate": audio_rate,
         },
     )
     spine = element_tree.SubElement(sequence, "spine")
@@ -244,7 +304,7 @@ def export_fcpxml(
         fps_num=fps_num,
         fps_den=fps_den,
         asset_ref="r2",
-        clip_name=clip_name,
+        clip_name=asset_name,
         asset_total_frames=asset_total_frames,
     )
 
@@ -257,3 +317,46 @@ def export_fcpxml(
 
     output_path.write_text(_pretty_xml(root), encoding="utf-8")
     return output_path
+
+
+def _build_output_paths(
+    output_path: Path,
+    target: FCPXMLTarget,
+) -> list[tuple[Literal["resolve", "fcp"], Path]]:
+    """target に応じた出力パス一覧を返す。"""
+    if target == "resolve":
+        return [("resolve", output_path)]
+
+    if target == "fcp":
+        return [("fcp", output_path)]
+
+    suffix = output_path.suffix or ".fcpxml"
+    stem = output_path.stem
+    return [
+        ("resolve", output_path.with_name(f"{stem}_resolve{suffix}")),
+        ("fcp", output_path.with_name(f"{stem}_fcp{suffix}")),
+    ]
+
+
+def export_fcpxml(
+    video_path: Path,
+    segments: list[dict[str, Any]],
+    media_info: dict[str, Any],
+    output_path: Path,
+    target: FCPXMLTarget = "resolve",
+) -> list[Path]:
+    """FCPXML をターゲット別に生成する。"""
+    output_paths: list[Path] = []
+
+    for variant, variant_output_path in _build_output_paths(output_path, target):
+        output_paths.append(
+            _build_single_fcpxml(
+                video_path=video_path,
+                segments=segments,
+                media_info=media_info,
+                output_path=variant_output_path,
+                variant=variant,
+            )
+        )
+
+    return output_paths

@@ -29,7 +29,6 @@ body {
 }
 """
 
-# 出力ディレクトリ未指定を表すプレースホルダー
 _OUTPUT_DIR_AUTO = "（入力動画と同じディレクトリに出力）"
 
 
@@ -47,8 +46,8 @@ def _build_ui_config(
     padding: float,
     min_confidence: float,
     video_encoder: str,
+    fcpxml_target: str,
 ) -> AppConfig:
-    # プレースホルダーまたは空欄の場合は output_dir を None にする
     effective_output_dir: str | None = output_dir.strip()
     if not effective_output_dir or effective_output_dir == _OUTPUT_DIR_AUTO:
         effective_output_dir = None
@@ -67,6 +66,7 @@ def _build_ui_config(
         padding=padding,
         min_confidence=min_confidence,
         video_encoder=video_encoder,
+        fcpxml_target=fcpxml_target,
     )
 
 
@@ -183,6 +183,11 @@ def launch_webui(config: AppConfig) -> None:
                     label="映像エンコーダー（auto: HW利用可能なら自動選択）",
                     value=config.video_encoder,
                 )
+                fcpxml_target = gr.Dropdown(
+                    choices=["resolve", "fcp", "both"],
+                    label="FCPXML 出力ターゲット",
+                    value=config.fcpxml_target,
+                )
 
             save_button = gr.Button("設定を保存")
             save_status = gr.Textbox(label="保存結果", interactive=False)
@@ -226,6 +231,7 @@ def launch_webui(config: AppConfig) -> None:
             padding_value: float,
             min_confidence_value: float,
             video_encoder_value: str,
+            fcpxml_target_value: str,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[str, list[str]]:
             if not raw_input_path or not raw_input_path.strip():
@@ -252,6 +258,7 @@ def launch_webui(config: AppConfig) -> None:
                 padding=padding_value,
                 min_confidence=min_confidence_value,
                 video_encoder=video_encoder_value,
+                fcpxml_target=fcpxml_target_value,
             )
 
             effective_output_dir = resolve_output_dir(runtime_config, input_path)
@@ -288,6 +295,7 @@ def launch_webui(config: AppConfig) -> None:
             padding_value: float,
             min_confidence_value: float,
             video_encoder_value: str,
+            fcpxml_target_value: str,
         ) -> str:
             updated_config = _build_ui_config(
                 config,
@@ -303,6 +311,7 @@ def launch_webui(config: AppConfig) -> None:
                 padding=padding_value,
                 min_confidence=min_confidence_value,
                 video_encoder=video_encoder_value,
+                fcpxml_target=fcpxml_target_value,
             )
             saved_path = save_settings(updated_config)
             return f"設定を保存しました: {saved_path}"
@@ -324,6 +333,7 @@ def launch_webui(config: AppConfig) -> None:
                 padding,
                 min_confidence,
                 video_encoder,
+                fcpxml_target,
             ],
             outputs=[log_box, output_files],
         )
@@ -343,6 +353,7 @@ def launch_webui(config: AppConfig) -> None:
                 padding,
                 min_confidence,
                 video_encoder,
+                fcpxml_target,
             ],
             outputs=save_status,
         )
