@@ -9,7 +9,12 @@ from pathlib import Path
 import gradio as gr
 
 from mov_voicecrop.cli import execute_pipeline
-from mov_voicecrop.config import AppConfig, build_config_from_overrides, save_settings
+from mov_voicecrop.config import (
+    AppConfig,
+    build_config_from_overrides,
+    resolve_output_dir,
+    save_settings,
+)
 
 
 WEBUI_CSS = """
@@ -23,6 +28,9 @@ body {
     font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
 }
 """
+
+# 出力ディレクトリ未指定を表すプレースホルダー
+_OUTPUT_DIR_AUTO = "（入力動画と同じディレクトリ）"
 
 
 def _build_ui_config(
@@ -40,9 +48,14 @@ def _build_ui_config(
     min_confidence: float,
     video_encoder: str,
 ) -> AppConfig:
+    # プレースホルダーまたは空欄の場合は output_dir を None にする
+    effective_output_dir: str | None = output_dir.strip()
+    if not effective_output_dir or effective_output_dir == _OUTPUT_DIR_AUTO:
+        effective_output_dir = None
+
     return build_config_from_overrides(
         base_config,
-        output_dir=output_dir,
+        output_dir=effective_output_dir,
         subtitle_mode=subtitle_mode,
         language=language,
         whisper_cli_path=whisper_cli_path,
@@ -68,6 +81,13 @@ def _copy_outputs_to_tempdir(output_paths: list[Path]) -> list[str]:
     return copied
 
 
+def _output_dir_display(config: AppConfig) -> str:
+    """設定に応じた出力ディレクトリの表示値を返す。"""
+    if config.output_dir is not None:
+        return str(config.output_dir)
+    return _OUTPUT_DIR_AUTO
+
+
 def launch_webui(config: AppConfig) -> None:
     """Web UI を起動する。"""
 
@@ -78,8 +98,8 @@ def launch_webui(config: AppConfig) -> None:
         with gr.Tab("メイン処理"):
             input_video = gr.File(label="入力動画", type="filepath")
             output_dir = gr.Textbox(
-                label="出力ディレクトリ",
-                value=str(config.output_dir),
+                label="出力ディレクトリ（空欄で入力動画と同じディレクトリに出力）",
+                value=_output_dir_display(config),
             )
             style = gr.Radio(
                 choices=["mp4", "xml", "both"],
@@ -164,6 +184,25 @@ def launch_webui(config: AppConfig) -> None:
             save_button = gr.Button("設定を保存")
             save_status = gr.Textbox(label="保存結果", interactive=False)
 
+        def on_input_video_change(input_video_path: str | None, current_output_dir: str) -> str:
+            """入力動画が変更されたとき、出力ディレクトリがデフォルト状態なら自動更新する。"""
+            is_default = (
+                not current_output_dir.strip()
+                or current_output_dir.strip() == _OUTPUT_DIR_AUTO
+            )
+            if not is_default:
+                return current_output_dir
+
+            if input_video_path:
+                return str(Path(input_video_path).expanduser().resolve().parent)
+            return _OUTPUT_DIR_AUTO
+
+        input_video.change(
+            fn=on_input_video_change,
+            inputs=[input_video, output_dir],
+            outputs=output_dir,
+        )
+
         def process_uploaded_video(
             input_video_path: str | None,
             output_dir_value: str,
@@ -200,6 +239,9 @@ def launch_webui(config: AppConfig) -> None:
                 video_encoder=video_encoder_value,
             )
 
+            input_path = Path(input_video_path).expanduser().resolve()
+            effective_output_dir = resolve_output_dir(runtime_config, input_path)
+
             logs: list[str] = []
 
             def callback(current_progress: float, message: str) -> None:
@@ -207,8 +249,8 @@ def launch_webui(config: AppConfig) -> None:
                 progress(current_progress, desc=message)
 
             outputs = execute_pipeline(
-                input_path=Path(input_video_path).expanduser().resolve(),
-                output_dir=runtime_config.output_dir.resolve(),
+                input_path=input_path,
+                output_dir=effective_output_dir,
                 style=style_value,
                 config=runtime_config,
                 progress_callback=callback,

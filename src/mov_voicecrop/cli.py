@@ -8,7 +8,12 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from mov_voicecrop.config import AppConfig, PROJECT_ROOT, load_config
+from mov_voicecrop.config import (
+    AppConfig,
+    PROJECT_ROOT,
+    load_config,
+    resolve_output_dir,
+)
 from mov_voicecrop.exporter_fcpxml import export_fcpxml
 from mov_voicecrop.exporter_mp4 import export_mp4
 from mov_voicecrop.exporter_srt import export_srt
@@ -151,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         default=None,
-        help="出力ディレクトリ（デフォルト: ./output）",
+        help="出力ディレクトリ（デフォルト: 入力動画と同じディレクトリ）",
     )
     parser.add_argument(
         "--style",
@@ -190,7 +195,7 @@ def run_cli(args: argparse.Namespace) -> None:
     if not input_path.exists():
         raise FileNotFoundError(f"入力動画が見つかりません: {input_path}")
 
-    output_dir = config.output_dir.resolve()
+    output_dir = resolve_output_dir(config, input_path)
     style = args.style
 
     outputs = execute_pipeline(

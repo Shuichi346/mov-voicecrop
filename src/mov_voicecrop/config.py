@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -15,16 +15,24 @@ from dotenv import dotenv_values
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_PATH = PROJECT_ROOT / "settings.json"
 ENV_PATH = PROJECT_ROOT / ".env"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "output"
 
 
 @dataclass(slots=True)
 class AppConfig:
-    """アプリケーション設定。"""
+    """アプリケーション設定。
 
-    whisper_cli_path: Path = PROJECT_ROOT / "whisper.cpp" / "build" / "bin" / "whisper-cli"
-    whisper_model_path: Path = PROJECT_ROOT / "whisper.cpp" / "models" / "ggml-large-v3-turbo.bin"
-    whisper_vad_model_path: Path = PROJECT_ROOT / "whisper.cpp" / "models" / "ggml-silero-v6.2.0.bin"
+    output_dir が None の場合は入力動画と同じディレクトリに出力する。
+    """
+
+    whisper_cli_path: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "whisper.cpp" / "build" / "bin" / "whisper-cli"
+    )
+    whisper_model_path: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "whisper.cpp" / "models" / "ggml-large-v3-turbo.bin"
+    )
+    whisper_vad_model_path: Path = field(
+        default_factory=lambda: PROJECT_ROOT / "whisper.cpp" / "models" / "ggml-silero-v6.2.0.bin"
+    )
     language: str = "ja"
     whisper_threads: int = 8
     silence_thresh_db: float = -35.0
@@ -35,7 +43,7 @@ class AppConfig:
     video_encoder: str = "auto"
     gradio_server_name: str = "127.0.0.1"
     gradio_server_port: int = 7860
-    output_dir: Path = DEFAULT_OUTPUT_DIR
+    output_dir: Path | None = None
 
 
 PERSISTENT_KEYS = {
@@ -161,14 +169,19 @@ def _cli_to_dict(cli_args: argparse.Namespace | None) -> dict[str, Any]:
         if value is None:
             continue
         config_key = CLI_ARG_MAP.get(key, key)
-        if config_key in AppConfig.__dataclass_fields__:
+        if config_key in {f.name for f in AppConfig.__dataclass_fields__.values()}:
             cli_values[config_key] = _coerce_value(config_key, value)
     return cli_values
 
 
 def load_config(cli_args: argparse.Namespace | None = None) -> AppConfig:
-    """設定を優先順位に従って読み込む。"""
-    merged: dict[str, Any] = asdict(AppConfig())
+    """設定を優先順位に従って読み込む。
+
+    output_dir は .env / settings.json / CLI のいずれかで明示指定されない限り
+    None のまま保持し、実行時に入力動画の親ディレクトリをデフォルトとして使う。
+    """
+    defaults = asdict(AppConfig())
+    merged: dict[str, Any] = dict(defaults)
 
     for source in (_collect_env_values(), load_settings(), _cli_to_dict(cli_args)):
         for key, value in source.items():
@@ -176,9 +189,21 @@ def load_config(cli_args: argparse.Namespace | None = None) -> AppConfig:
                 merged[key] = value
 
     for key in PATH_FIELDS:
-        merged[key] = _coerce_value(key, merged[key])
+        if merged[key] is not None:
+            merged[key] = _coerce_value(key, merged[key])
 
     return AppConfig(**merged)
+
+
+def resolve_output_dir(config: AppConfig, input_path: Path) -> Path:
+    """実際に使用する出力ディレクトリを決定する。
+
+    config.output_dir が設定されていればそれを使い、
+    未設定（None）なら入力動画と同じディレクトリを返す。
+    """
+    if config.output_dir is not None:
+        return config.output_dir.resolve()
+    return input_path.expanduser().resolve().parent
 
 
 def save_settings(config: AppConfig) -> Path:
@@ -186,6 +211,8 @@ def save_settings(config: AppConfig) -> Path:
     serializable: dict[str, Any] = {}
     for key in PERSISTENT_KEYS:
         value = getattr(config, key)
+        if value is None:
+            continue
         if isinstance(value, Path):
             serializable[key] = _path_to_storage(value)
         else:

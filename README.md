@@ -10,6 +10,7 @@
 - CLI と Gradio Web UI の両対応
 - `.env` と `settings.json` による設定管理
 - ハードウェアエンコード（h264_videotoolbox）の自動検出・利用
+- 出力先はデフォルトで入力動画と同じディレクトリ（変更可能）
 
 ## セットアップ
 
@@ -37,6 +38,10 @@ cp .env.example .env
 CLI:
 
 ```bash
+# 出力先を指定しない場合、入力動画と同じディレクトリに出力されます
+uv run python main.py cli -i /path/to/input.mp4 --style both
+
+# 出力先を明示指定する場合
 uv run python main.py cli -i /path/to/input.mp4 -o ./output --style both
 ```
 
@@ -54,6 +59,10 @@ uv run python main.py webui
 - `*_cut.srt`: カット後タイムライン基準の字幕
 - `*_cut.mp4`: カット済み動画（字幕モード soft の場合はソフトサブ付き）
 - `*.fcpxml`: DaVinci Resolve 20 読み込み用 FCPXML
+
+## 出力ディレクトリ
+
+デフォルトでは入力動画と同じディレクトリに出力ファイルが生成されます。CLI の `-o` オプション、Web UI の「出力ディレクトリ」欄、`.env` の `OUTPUT_DIR`、または `settings.json` で変更できます。
 
 ## 字幕モード
 

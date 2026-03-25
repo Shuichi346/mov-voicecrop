@@ -15,8 +15,6 @@ build/
 .env
 settings.json
 whisper.cpp/
-output/
-!output/.gitkeep
 
 # 一時ファイル（temp/ ディレクトリの中身）
 temp/*
