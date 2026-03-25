@@ -1,0 +1,17 @@
+[project]
+name = "mov-voicecrop"
+version = "0.1.0"
+description = "Whisper.cpp と ffmpeg を使った自動無音カット＆字幕生成ツール"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "gradio>=6.9.0,<7.0.0",
+    "python-dotenv>=1.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mov_voicecrop"]

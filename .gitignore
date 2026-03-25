@@ -1,0 +1,23 @@
+# OS固有
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+
+# プロジェクト固有
+.env
+settings.json
+whisper.cpp/
+
+# 一時ファイル（temp/ ディレクトリの中身）
+temp/*
+!temp/.gitkeep
+*.wav
+*.tmp
