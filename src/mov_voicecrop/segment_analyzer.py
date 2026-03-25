@@ -83,13 +83,21 @@ def _normalize_to_frame_grid(
     segments: list[dict[str, Any]],
     media_duration: float,
     fps_rational: str,
+    source_frame_count: int | None = None,
 ) -> list[dict[str, Any]]:
     """セグメント境界をフレーム単位へ正規化する。"""
     if not segments:
         return []
 
     fps_num, fps_den = _parse_fps_rational(fps_rational)
-    media_end_frame = _seconds_to_frame_index(media_duration, fps_num, fps_den)
+
+    if source_frame_count is not None and source_frame_count > 0:
+        media_end_frame = source_frame_count
+    else:
+        media_end_frame = _seconds_to_frame_index(media_duration, fps_num, fps_den)
+
+    if media_end_frame <= 0:
+        return []
 
     normalized: list[dict[str, Any]] = []
     previous_end_frame = 0
@@ -102,6 +110,7 @@ def _normalize_to_frame_grid(
         end_frame = _seconds_to_frame_index(end_seconds, fps_num, fps_den)
 
         start_frame = max(previous_end_frame, start_frame)
+        start_frame = min(start_frame, media_end_frame - 1)
         end_frame = min(media_end_frame, max(start_frame + 1, end_frame))
 
         if end_frame <= start_frame:
@@ -123,6 +132,7 @@ def analyze_segments(
     media_duration: float,
     config: AppConfig,
     fps_rational: str = "30/1",
+    source_frame_count: int | None = None,
 ) -> list[dict[str, Any]]:
     """whisper と無音検出結果を統合して保持区間を返す。"""
     valid_segments: list[dict[str, Any]] = []
@@ -186,4 +196,5 @@ def analyze_segments(
         merged_segments,
         media_duration=media_duration,
         fps_rational=fps_rational,
+        source_frame_count=source_frame_count,
     )

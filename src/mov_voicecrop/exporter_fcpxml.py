@@ -51,16 +51,17 @@ def _audio_rate_label(sample_rate: int) -> str:
     return "48k"
 
 
-def _seconds_to_frame_fraction(seconds: float, fps_num: int, fps_den: int) -> Fraction:
-    """秒を最も近いフレーム境界の Fraction に変換する。"""
-    if seconds <= 0:
-        return Fraction(0, 1)
+def _seconds_to_frame_index(seconds: float, fps_num: int, fps_den: int) -> int:
+    """秒を最も近いフレーム番号へ変換する。"""
+    frames = Fraction(str(max(0.0, seconds))) * Fraction(fps_num, fps_den)
+    return int(frames + Fraction(1, 2))
 
-    frame_count = int(Fraction(str(seconds)) * Fraction(fps_num, fps_den) + Fraction(1, 2))
-    if frame_count <= 0:
-        return Fraction(0, 1)
 
-    return Fraction(frame_count * fps_den, fps_num)
+def _frame_index_to_fraction(frame_index: int, fps_num: int, fps_den: int) -> Fraction:
+    """フレーム番号を秒の Fraction に変換する。"""
+    if frame_index <= 0:
+        return Fraction(0, 1)
+    return Fraction(frame_index * fps_den, fps_num)
 
 
 def _frame_count_to_fraction(frame_count: int, fps_num: int, fps_den: int) -> Fraction:
@@ -68,12 +69,6 @@ def _frame_count_to_fraction(frame_count: int, fps_num: int, fps_den: int) -> Fr
     if frame_count <= 0:
         return Fraction(0, 1)
     return Fraction(frame_count * fps_den, fps_num)
-
-
-def seconds_to_rational(seconds: float, fps_rational: str) -> str:
-    """秒を FCPXML の有理数表記へ変換する。"""
-    fps_num, fps_den = _parse_fps_rational(fps_rational)
-    return _fraction_to_string(_seconds_to_frame_fraction(seconds, fps_num, fps_den))
 
 
 def _pretty_xml(root: element_tree.Element) -> str:
@@ -90,6 +85,21 @@ def _file_url_for_resolve(video_path: Path) -> str:
     return f"file://{quote(str(resolved), safe='/')}"
 
 
+def _resolve_asset_frame_count(
+    media_info: dict[str, Any],
+    fps_num: int,
+    fps_den: int,
+) -> int:
+    """アセット全体の実フレーム数を決定する。"""
+    frame_count = int(media_info.get("frame_count", 0) or 0)
+    if frame_count > 0:
+        return frame_count
+
+    duration_seconds = float(media_info.get("duration", 0.0) or 0.0)
+    estimated = _seconds_to_frame_index(duration_seconds, fps_num, fps_den)
+    return max(0, estimated)
+
+
 def _build_spine_clips(
     spine: element_tree.Element,
     segments: list[dict[str, Any]],
@@ -97,43 +107,54 @@ def _build_spine_clips(
     fps_den: int,
     asset_ref: str,
     clip_name: str,
-) -> Fraction:
-    """spine 内の asset-clip を構築し、総尺を返す。"""
+    asset_total_frames: int,
+) -> int:
+    """spine 内の asset-clip を構築し、総フレーム数を返す。"""
     timeline_frame_offset = 0
-    total_duration = Fraction(0, 1)
+    total_timeline_frames = 0
 
     for segment in segments:
         start_seconds = float(segment["start"])
         end_seconds = float(segment["end"])
 
-        start_fraction = _seconds_to_frame_fraction(start_seconds, fps_num, fps_den)
-        end_fraction = _seconds_to_frame_fraction(end_seconds, fps_num, fps_den)
+        start_frame = _seconds_to_frame_index(start_seconds, fps_num, fps_den)
+        end_frame = _seconds_to_frame_index(end_seconds, fps_num, fps_den)
 
-        clip_duration = end_fraction - start_fraction
-        if clip_duration <= 0:
+        if asset_total_frames > 0:
+            start_frame = min(max(0, start_frame), asset_total_frames - 1)
+            end_frame = min(asset_total_frames, max(start_frame + 1, end_frame))
+        else:
+            start_frame = max(0, start_frame)
+            end_frame = max(start_frame + 1, end_frame)
+
+        clip_frames = end_frame - start_frame
+        if clip_frames <= 0:
             continue
-
-        offset_fraction = _frame_count_to_fraction(timeline_frame_offset, fps_num, fps_den)
 
         element_tree.SubElement(
             spine,
             "asset-clip",
             {
                 "ref": asset_ref,
-                "offset": _fraction_to_string(offset_fraction),
+                "offset": _fraction_to_string(
+                    _frame_count_to_fraction(timeline_frame_offset, fps_num, fps_den)
+                ),
                 "name": clip_name,
-                "start": _fraction_to_string(start_fraction),
-                "duration": _fraction_to_string(clip_duration),
+                "start": _fraction_to_string(
+                    _frame_index_to_fraction(start_frame, fps_num, fps_den)
+                ),
+                "duration": _fraction_to_string(
+                    _frame_count_to_fraction(clip_frames, fps_num, fps_den)
+                ),
                 "tcFormat": "NDF",
                 "enabled": "1",
             },
         )
 
-        clip_frames = int(clip_duration * Fraction(fps_num, fps_den))
         timeline_frame_offset += clip_frames
-        total_duration += clip_duration
+        total_timeline_frames += clip_frames
 
-    return total_duration
+    return total_timeline_frames
 
 
 def export_fcpxml(
@@ -156,6 +177,7 @@ def export_fcpxml(
     audio_layout = "mono" if audio_channels == 1 else "stereo"
     clip_name = video_path.name
     asset_src = _file_url_for_resolve(video_path)
+    asset_total_frames = _resolve_asset_frame_count(media_info, fps_num, fps_den)
 
     root = element_tree.Element("fcpxml", version="1.10")
     resources = element_tree.SubElement(root, "resources")
@@ -184,7 +206,9 @@ def export_fcpxml(
             "uid": asset_uid,
             "src": asset_src,
             "start": "0s",
-            "duration": seconds_to_rational(float(media_info["duration"]), fps_rational),
+            "duration": _fraction_to_string(
+                _frame_count_to_fraction(asset_total_frames, fps_num, fps_den)
+            ),
             "hasVideo": "1",
             "format": "r1",
             "hasAudio": "1",
@@ -214,15 +238,22 @@ def export_fcpxml(
     )
     spine = element_tree.SubElement(sequence, "spine")
 
-    total_cut_duration = _build_spine_clips(
+    total_timeline_frames = _build_spine_clips(
         spine=spine,
         segments=segments,
         fps_num=fps_num,
         fps_den=fps_den,
         asset_ref="r2",
         clip_name=clip_name,
+        asset_total_frames=asset_total_frames,
     )
-    sequence.set("duration", _fraction_to_string(total_cut_duration))
+
+    sequence.set(
+        "duration",
+        _fraction_to_string(
+            _frame_count_to_fraction(total_timeline_frames, fps_num, fps_den)
+        ),
+    )
 
     output_path.write_text(_pretty_xml(root), encoding="utf-8")
     return output_path

@@ -111,6 +111,7 @@ def execute_pipeline(
             media_duration=float(media["duration"]),
             config=config,
             fps_rational=str(media.get("fps_rational", "30/1")),
+            source_frame_count=int(media.get("frame_count", 0) or 0),
         )
 
         original_srt_path = output_dir / f"{base_name}_original.srt"
