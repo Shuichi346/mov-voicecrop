@@ -1,4 +1,4 @@
-"""FCPXML 1.14 エクスポーター。"""
+"""FCPXML 1.13 エクスポーター（DaVinci Resolve 20 対応）。"""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def export_fcpxml(
     media_info: dict[str, Any],
     output_path: Path,
 ) -> Path:
-    """Final Cut Pro 読み込み向け FCPXML 1.14 を生成する。"""
+    """DaVinci Resolve 20 読み込み向け FCPXML 1.13 を生成する。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fps_rational = str(media_info.get("fps_rational", "30/1"))
@@ -94,7 +94,7 @@ def export_fcpxml(
         for segment in segments
     )
 
-    root = element_tree.Element("fcpxml", version="1.14")
+    root = element_tree.Element("fcpxml", version="1.13")
     resources = element_tree.SubElement(root, "resources")
 
     element_tree.SubElement(
