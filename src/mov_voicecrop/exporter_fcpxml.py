@@ -13,6 +13,30 @@ from xml.dom import minidom
 
 FCPXMLTarget = Literal["resolve", "fcp", "both"]
 
+_FCP_COLOR_SPACE_REC709 = "1-1-1 (Rec. 709)"
+_KNOWN_AUDIO_RATE_LABELS = {
+    32000: "32k",
+    44100: "44.1k",
+    48000: "48k",
+    88200: "88.2k",
+    96000: "96k",
+    176400: "176.4k",
+    192000: "192k",
+}
+_FCP_FRAME_RATE_SUFFIXES = {
+    Fraction(24000, 1001): "2398",
+    Fraction(24, 1): "24",
+    Fraction(25, 1): "25",
+    Fraction(30000, 1001): "2997",
+    Fraction(30, 1): "30",
+    Fraction(48, 1): "48",
+    Fraction(50, 1): "50",
+    Fraction(60000, 1001): "5994",
+    Fraction(60, 1): "60",
+    Fraction(120000, 1001): "11988",
+    Fraction(120, 1): "120",
+}
+
 
 def _parse_fps_rational(value: str) -> tuple[int, int]:
     """fps の有理数文字列を安全に解析する。"""
@@ -36,22 +60,9 @@ def _fraction_to_string(value: Fraction) -> str:
     return f"{value.numerator}/{value.denominator}s"
 
 
-def _audio_rate_label(sample_rate: int) -> str:
-    """サンプルレートを FCPXML 向け表記へ変換する。"""
-    known_labels = {
-        32000: "32k",
-        44100: "44.1k",
-        48000: "48k",
-        88200: "88.2k",
-        96000: "96k",
-        176400: "176.4k",
-        192000: "192k",
-    }
-    if sample_rate in known_labels:
-        return known_labels[sample_rate]
-    if sample_rate > 0:
-        return f"{sample_rate / 1000:g}k"
-    return "48k"
+def _supported_audio_rate_label(sample_rate: int) -> str | None:
+    """FCPXML DTD で許可される audioRate ラベルのみ返す。"""
+    return _KNOWN_AUDIO_RATE_LABELS.get(sample_rate)
 
 
 def _seconds_to_frame_index(seconds: float, fps_num: int, fps_den: int) -> int:
@@ -106,6 +117,72 @@ def _resolve_asset_frame_count(
     return max(0, estimated)
 
 
+def _normalize_audio_channels(media_info: dict[str, Any]) -> int:
+    """音声チャンネル数を FCPXML 向けに正規化する。"""
+    audio_channels = int(media_info.get("audio_channels", 0) or 0)
+    if audio_channels > 0:
+        return audio_channels
+    return 2
+
+
+def _set_optional_attribute(
+    attributes: dict[str, str],
+    key: str,
+    value: str | None,
+) -> None:
+    """None でない属性だけを追加する。"""
+    if value is not None and value != "":
+        attributes[key] = value
+
+
+def _build_fcp_format_name(
+    width: int,
+    height: int,
+    fps_num: int,
+    fps_den: int,
+) -> str | None:
+    """Final Cut が受け入れやすい format 名を生成する。"""
+    if width <= 0 or height <= 0:
+        return None
+
+    fps_fraction = Fraction(fps_num, fps_den)
+    rate_suffix = _FCP_FRAME_RATE_SUFFIXES.get(fps_fraction)
+    if rate_suffix is None:
+        return None
+
+    # 縦動画や特殊ラスタでは name を推測しない方が安全
+    if height > width:
+        return None
+
+    return f"FFVideoFormat{height}p{rate_suffix}"
+
+
+def _build_format_element(
+    resources: element_tree.Element,
+    media_info: dict[str, Any],
+    format_id: str,
+    fps_num: int,
+    fps_den: int,
+) -> None:
+    """format リソース要素を生成する。"""
+    width = int(media_info.get("width", 0) or 0)
+    height = int(media_info.get("height", 0) or 0)
+
+    attributes = {
+        "id": format_id,
+        "frameDuration": f"{fps_den}/{fps_num}s",
+        "width": str(width),
+        "height": str(height),
+        "fieldOrder": "progressive",
+        "colorSpace": _FCP_COLOR_SPACE_REC709,
+    }
+
+    format_name = _build_fcp_format_name(width, height, fps_num, fps_den)
+    _set_optional_attribute(attributes, "name", format_name)
+
+    element_tree.SubElement(resources, "format", attributes)
+
+
 def _build_asset(
     resources: element_tree.Element,
     variant: Literal["resolve", "fcp"],
@@ -115,14 +192,13 @@ def _build_asset(
     asset_duration: str,
     format_id: str,
     audio_channels: int,
-    audio_rate_label: str,
+    audio_rate_label: str | None,
     asset_url: str,
 ) -> None:
     """variant ごとの asset 要素を生成する。"""
     common_attrs = {
         "id": asset_id,
         "name": asset_name,
-        "uid": asset_uid,
         "start": "0s",
         "duration": asset_duration,
         "hasVideo": "1",
@@ -130,10 +206,12 @@ def _build_asset(
         "hasAudio": "1",
         "audioSources": "1",
         "audioChannels": str(audio_channels),
-        "audioRate": audio_rate_label,
     }
 
+    _set_optional_attribute(common_attrs, "audioRate", audio_rate_label)
+
     if variant == "resolve":
+        common_attrs["uid"] = asset_uid
         element_tree.SubElement(
             resources,
             "asset",
@@ -164,6 +242,7 @@ def _build_spine_clips(
     asset_ref: str,
     clip_name: str,
     asset_total_frames: int,
+    format_id: str,
 ) -> int:
     """spine 内の asset-clip を構築し、総フレーム数を返す。"""
     timeline_frame_offset = 0
@@ -192,6 +271,7 @@ def _build_spine_clips(
             "asset-clip",
             {
                 "ref": asset_ref,
+                "format": format_id,
                 "offset": _fraction_to_string(
                     _frame_count_to_fraction(timeline_frame_offset, fps_num, fps_den)
                 ),
@@ -233,12 +313,11 @@ def _build_single_fcpxml(
 
     fps_rational = str(media_info.get("fps_rational", "30/1"))
     fps_num, fps_den = _parse_fps_rational(fps_rational)
-    frame_duration = f"{fps_den}/{fps_num}s"
 
     asset_uid = uuid.uuid4().hex.upper()
     sample_rate = int(media_info.get("audio_sample_rate", 0) or 0)
-    audio_rate = _audio_rate_label(sample_rate)
-    audio_channels = int(media_info.get("audio_channels", 0) or 2)
+    audio_rate = _supported_audio_rate_label(sample_rate)
+    audio_channels = _normalize_audio_channels(media_info)
     audio_layout = _audio_layout_label(audio_channels)
     asset_name = video_path.name
     asset_url = _file_url(video_path)
@@ -247,32 +326,28 @@ def _build_single_fcpxml(
         _frame_count_to_fraction(asset_total_frames, fps_num, fps_den)
     )
 
+    format_id = "r1"
+    asset_id = "r2"
+
     root = element_tree.Element("fcpxml", version=_variant_version(variant))
     resources = element_tree.SubElement(root, "resources")
 
-    element_tree.SubElement(
-        resources,
-        "format",
-        {
-            "id": "r1",
-            "name": (
-                f"FFVideoFormat{int(media_info['height'])}p"
-                f"{round(float(media_info['fps']) or 30)}"
-            ),
-            "frameDuration": frame_duration,
-            "width": str(int(media_info["width"])),
-            "height": str(int(media_info["height"])),
-        },
+    _build_format_element(
+        resources=resources,
+        media_info=media_info,
+        format_id=format_id,
+        fps_num=fps_num,
+        fps_den=fps_den,
     )
 
     _build_asset(
         resources=resources,
         variant=variant,
-        asset_id="r2",
+        asset_id=asset_id,
         asset_name=asset_name,
         asset_uid=asset_uid,
         asset_duration=asset_duration,
-        format_id="r1",
+        format_id=format_id,
         audio_channels=audio_channels,
         audio_rate_label=audio_rate,
         asset_url=asset_url,
@@ -285,17 +360,16 @@ def _build_single_fcpxml(
         "project",
         {"name": f"{media_info['filename']}_cut"},
     )
-    sequence = element_tree.SubElement(
-        project,
-        "sequence",
-        {
-            "format": "r1",
-            "tcStart": "0s",
-            "tcFormat": "NDF",
-            "audioLayout": audio_layout,
-            "audioRate": audio_rate,
-        },
-    )
+
+    sequence_attrs = {
+        "format": format_id,
+        "tcStart": "0s",
+        "tcFormat": "NDF",
+        "audioLayout": audio_layout,
+    }
+    _set_optional_attribute(sequence_attrs, "audioRate", audio_rate)
+
+    sequence = element_tree.SubElement(project, "sequence", sequence_attrs)
     spine = element_tree.SubElement(sequence, "spine")
 
     total_timeline_frames = _build_spine_clips(
@@ -303,9 +377,10 @@ def _build_single_fcpxml(
         segments=segments,
         fps_num=fps_num,
         fps_den=fps_den,
-        asset_ref="r2",
+        asset_ref=asset_id,
         clip_name=asset_name,
         asset_total_frames=asset_total_frames,
+        format_id=format_id,
     )
 
     sequence.set(
