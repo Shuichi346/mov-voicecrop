@@ -40,6 +40,8 @@ class AppConfig:
     min_silence_duration: float = 0.25
     padding: float = 0.15
     min_confidence: float = 0.35
+    cut_unrecognized: bool = True
+    unrecognized_threshold: float = 0.35
     subtitle_mode: str = "soft"
     video_encoder: str = "auto"
     fcpxml_target: str = "resolve"
@@ -58,6 +60,8 @@ PERSISTENT_KEYS = {
     "min_silence_duration",
     "padding",
     "min_confidence",
+    "cut_unrecognized",
+    "unrecognized_threshold",
     "subtitle_mode",
     "video_encoder",
     "fcpxml_target",
@@ -77,6 +81,8 @@ ENV_KEY_MAP = {
     "PADDING": "padding",
     "MIN_CONFIDENCE": "min_confidence",
     "MIN_AVG_LOGPROB": "min_confidence",
+    "CUT_UNRECOGNIZED": "cut_unrecognized",
+    "UNRECOGNIZED_THRESHOLD": "unrecognized_threshold",
     "SUBTITLE_MODE": "subtitle_mode",
     "VIDEO_ENCODER": "video_encoder",
     "FCPXML_TARGET": "fcpxml_target",
@@ -98,7 +104,9 @@ FLOAT_FIELDS = {
     "min_silence_duration",
     "padding",
     "min_confidence",
+    "unrecognized_threshold",
 }
+BOOL_FIELDS = {"cut_unrecognized"}
 
 CLI_ARG_MAP = {
     "output": "output_dir",
@@ -116,7 +124,7 @@ def normalize_user_path(value: str | Path) -> str:
     """Web UI などで入力されたパス文字列を正規化する。
 
     macOS のターミナルからコピーした shell 形式のパス
-    例: '/Users/name/My\ File.mp4'
+    例: '/Users/name/My\\ File.mp4'
     を通常のパス文字列へ戻す。
     """
     text = str(value).strip()
@@ -177,6 +185,14 @@ def _path_to_storage(value: Path) -> str:
         return str(value.resolve())
 
 
+def _coerce_bool(value: Any) -> bool:
+    """文字列や数値を bool に変換する。"""
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    return text in {"true", "1", "yes", "on"}
+
+
 def _coerce_value(key: str, value: Any) -> Any:
     if value is None:
         return None
@@ -186,6 +202,8 @@ def _coerce_value(key: str, value: Any) -> Any:
         return int(value)
     if key in FLOAT_FIELDS:
         return float(value)
+    if key in BOOL_FIELDS:
+        return _coerce_bool(value)
     return value
 
 

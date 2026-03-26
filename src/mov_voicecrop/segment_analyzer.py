@@ -69,6 +69,110 @@ def _clip_interval_by_silence(
     return clipped_start, clipped_end
 
 
+def _find_unrecognized_regions(
+    tokens: list[dict[str, Any]],
+    threshold: float,
+) -> list[dict[str, float]]:
+    """トークン列から音声未認識区間（低確率トークンの連続）を検出する。
+
+    連続する低確率トークンをまとめて1つの未認識区間とする。
+    """
+    if not tokens:
+        return []
+
+    regions: list[dict[str, float]] = []
+    region_start: float | None = None
+    region_end: float = 0.0
+
+    for token in tokens:
+        probability = float(token.get("p", 1.0))
+        token_start = float(token.get("start", 0.0))
+        token_end = float(token.get("end", 0.0))
+
+        if token_end <= token_start:
+            continue
+
+        if probability < threshold:
+            # 低確率トークン：未認識区間を開始または延長
+            if region_start is None:
+                region_start = token_start
+            region_end = token_end
+        else:
+            # 高確率トークン：未認識区間があれば確定
+            if region_start is not None:
+                regions.append({"start": region_start, "end": region_end})
+                region_start = None
+
+    # 末尾の未認識区間を確定
+    if region_start is not None:
+        regions.append({"start": region_start, "end": region_end})
+
+    return regions
+
+
+def _split_segment_by_unrecognized(
+    segment: dict[str, Any],
+    unrecognized_threshold: float,
+) -> list[dict[str, Any]]:
+    """セグメントを音声未認識区間で分割し、認識済み部分だけを返す。
+
+    トークン情報がないセグメントはそのまま返す。
+    """
+    tokens = segment.get("tokens", [])
+    if not tokens:
+        return [segment]
+
+    unrecognized_regions = _find_unrecognized_regions(tokens, unrecognized_threshold)
+    if not unrecognized_regions:
+        return [segment]
+
+    seg_start = float(segment["start"])
+    seg_end = float(segment["end"])
+
+    # 認識済み区間を抽出（未認識区間の「隙間」が認識済み部分）
+    recognized_parts: list[dict[str, Any]] = []
+    current_start = seg_start
+
+    for region in unrecognized_regions:
+        if region["start"] > current_start:
+            # current_start から region["start"] までが認識済み
+            part_tokens = [
+                t for t in tokens
+                if float(t.get("start", 0.0)) >= current_start
+                and float(t.get("end", 0.0)) <= region["start"]
+                and float(t.get("p", 1.0)) >= unrecognized_threshold
+            ]
+            part_text = "".join(t.get("text", "") for t in part_tokens).strip()
+            if part_text:
+                recognized_parts.append({
+                    "start": current_start,
+                    "end": region["start"],
+                    "text": part_text,
+                    "avg_token_prob": segment.get("avg_token_prob", 1.0),
+                    "tokens": part_tokens,
+                })
+        current_start = region["end"]
+
+    # 最後の未認識区間の後ろに残った認識済み部分
+    if current_start < seg_end:
+        part_tokens = [
+            t for t in tokens
+            if float(t.get("start", 0.0)) >= current_start
+            and float(t.get("p", 1.0)) >= unrecognized_threshold
+        ]
+        part_text = "".join(t.get("text", "") for t in part_tokens).strip()
+        if part_text:
+            recognized_parts.append({
+                "start": current_start,
+                "end": seg_end,
+                "text": part_text,
+                "avg_token_prob": segment.get("avg_token_prob", 1.0),
+                "tokens": part_tokens,
+            })
+
+    return recognized_parts if recognized_parts else []
+
+
 def _merge_text(current_text: str, next_text: str) -> str:
     if not current_text:
         return next_text
@@ -148,24 +252,40 @@ def analyze_segments(
         if end <= start:
             continue
 
-        clipped = _clip_interval_by_silence(start, end, silence_regions)
-        if clipped is None:
-            continue
+        # 音声未認識区間を除外する場合、セグメントを分割する
+        if config.cut_unrecognized:
+            sub_segments = _split_segment_by_unrecognized(
+                segment, config.unrecognized_threshold
+            )
+        else:
+            sub_segments = [segment]
 
-        clipped_start, clipped_end = clipped
-        padded_start = max(0.0, clipped_start - config.padding)
-        padded_end = min(media_duration, clipped_end + config.padding)
-        if padded_end <= padded_start:
-            continue
+        for sub in sub_segments:
+            sub_start = float(sub.get("start", 0.0))
+            sub_end = float(sub.get("end", 0.0))
+            sub_text = str(sub.get("text", "")).strip()
 
-        valid_segments.append(
-            {
-                "start": padded_start,
-                "end": padded_end,
-                "text": text,
-                "avg_token_prob": avg_token_prob,
-            }
-        )
+            if sub_end <= sub_start or not sub_text:
+                continue
+
+            clipped = _clip_interval_by_silence(sub_start, sub_end, silence_regions)
+            if clipped is None:
+                continue
+
+            clipped_start, clipped_end = clipped
+            padded_start = max(0.0, clipped_start - config.padding)
+            padded_end = min(media_duration, clipped_end + config.padding)
+            if padded_end <= padded_start:
+                continue
+
+            valid_segments.append(
+                {
+                    "start": padded_start,
+                    "end": padded_end,
+                    "text": sub_text,
+                    "avg_token_prob": float(sub.get("avg_token_prob", 0.0)),
+                }
+            )
 
     if not valid_segments:
         return []
@@ -191,6 +311,7 @@ def analyze_segments(
 
     for segment in merged_segments:
         segment.pop("avg_token_prob", None)
+        segment.pop("tokens", None)
 
     return _normalize_to_frame_grid(
         merged_segments,

@@ -180,6 +180,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--padding", type=float, default=None, help="カット前後のマージン 秒")
     parser.add_argument("--min-confidence", type=float, default=None, help="最小信頼度")
     parser.add_argument(
+        "--cut-unrecognized",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="音声未認識区間もカットする（デフォルト: ON）",
+    )
+    parser.add_argument(
+        "--unrecognized-threshold",
+        type=float,
+        default=None,
+        help="音声未認識と判定するトークン確率の閾値",
+    )
+    parser.add_argument(
         "--subtitle-mode",
         choices=["soft", "off"],
         default=None,

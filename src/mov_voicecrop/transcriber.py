@@ -12,6 +12,9 @@ from mov_voicecrop.config import AppConfig
 
 ProgressLineCallback = Callable[[str], None]
 
+# whisper.cpp の特殊トークンプレフィックス（タイムスタンプトークンなど）
+_SPECIAL_TOKEN_PREFIXES = ("[_", )
+
 
 def _parse_timestamp_string(value: str) -> float:
     hours, minutes, seconds = value.replace(",", ".").split(":")
@@ -30,16 +33,96 @@ def _extract_seconds(segment: dict[str, Any], key: str) -> float:
     return 0.0
 
 
+def _extract_token_seconds(token: dict[str, Any], key: str) -> float:
+    """トークンから時刻（秒）を取得する。"""
+    offsets = token.get("offsets", {})
+    if key in offsets:
+        return float(offsets[key]) / 1000.0
+
+    timestamps = token.get("timestamps", {})
+    if key in timestamps:
+        return _parse_timestamp_string(str(timestamps[key]))
+
+    return 0.0
+
+
+def _is_special_token(token: dict[str, Any]) -> bool:
+    """特殊トークン（[_BEG_], [_TT_xxx] 等）かどうかを判定する。"""
+    text = str(token.get("text", ""))
+    return any(text.startswith(prefix) for prefix in _SPECIAL_TOKEN_PREFIXES)
+
+
 def _average_token_probability(segment: dict[str, Any]) -> float:
     tokens = segment.get("tokens", [])
     probabilities = [
         float(token["p"])
         for token in tokens
-        if isinstance(token, dict) and token.get("p") is not None
+        if isinstance(token, dict)
+        and token.get("p") is not None
+        and not _is_special_token(token)
     ]
     if probabilities:
         return sum(probabilities) / len(probabilities)
     return 1.0
+
+
+def _extract_token_details(
+    segment: dict[str, Any],
+    segment_start: float,
+    segment_end: float,
+) -> list[dict[str, Any]]:
+    """セグメント内の通常トークン（特殊トークンを除く）の詳細を抽出する。
+
+    各トークンの offsets はセグメント先頭からの相対オフセットなので、
+    segment_start を加算して絶対時刻に変換する。
+    """
+    raw_tokens = segment.get("tokens", [])
+    details: list[dict[str, Any]] = []
+
+    for token in raw_tokens:
+        if not isinstance(token, dict):
+            continue
+        if _is_special_token(token):
+            continue
+
+        text = str(token.get("text", ""))
+        probability = float(token.get("p", 1.0))
+        token_from = _extract_token_seconds(token, "from")
+        token_to = _extract_token_seconds(token, "to")
+
+        # whisper.cpp のトークンオフセットはセグメント内相対値
+        absolute_from = segment_start + token_from
+        absolute_to = segment_start + token_to
+
+        # 終了が開始以下のトークンは前のトークンの終了を引き継ぐ
+        if absolute_to <= absolute_from:
+            if details:
+                absolute_from = max(absolute_from, details[-1]["end"])
+            absolute_to = absolute_from
+
+        details.append({
+            "text": text,
+            "start": absolute_from,
+            "end": absolute_to,
+            "p": probability,
+        })
+
+    # トークン時刻をセグメント範囲内に収める
+    if details:
+        details[0]["start"] = max(segment_start, details[0]["start"])
+        details[-1]["end"] = min(segment_end, max(details[-1]["end"], details[-1]["start"]))
+
+        # 終了時刻が不明（0）なトークンの時刻を前後から補間する
+        for i, detail in enumerate(details):
+            if detail["end"] <= detail["start"]:
+                next_start = segment_end
+                for j in range(i + 1, len(details)):
+                    if details[j]["start"] > detail["start"]:
+                        next_start = details[j]["start"]
+                        break
+                detail["end"] = next_start
+
+    return details
 
 
 def _repair_broken_utf8(raw: bytes) -> str:
@@ -56,13 +139,11 @@ def _repair_broken_utf8(raw: bytes) -> str:
     while index < length:
         byte = raw[index]
 
-        # ASCII 範囲（0x00-0x7F）: そのまま
         if byte <= 0x7F:
             result.append(chr(byte))
             index += 1
             continue
 
-        # マルチバイトの先頭バイトから必要バイト数を判定
         if 0xC0 <= byte <= 0xDF:
             need = 2
         elif 0xE0 <= byte <= 0xEF:
@@ -70,12 +151,10 @@ def _repair_broken_utf8(raw: bytes) -> str:
         elif 0xF0 <= byte <= 0xF7:
             need = 4
         else:
-            # 継続バイト（0x80-0xBF）が単独で出現: スキップして蓄積
             result.append("\ufffd")
             index += 1
             continue
 
-        # 必要なバイト数が揃っているか確認
         if index + need <= length:
             chunk = raw[index : index + need]
             try:
@@ -85,7 +164,6 @@ def _repair_broken_utf8(raw: bytes) -> str:
             except UnicodeDecodeError:
                 pass
 
-        # バイトが足りない、またはデコード失敗: 置換して進む
         result.append("\ufffd")
         index += 1
 
@@ -113,12 +191,15 @@ def _parse_transcription_json(json_path: Path) -> list[dict[str, Any]]:
         if end <= start:
             continue
 
+        token_details = _extract_token_details(item, start, end)
+
         segments.append(
             {
                 "start": start,
                 "end": end,
                 "text": text_value,
                 "avg_token_prob": _average_token_probability(item),
+                "tokens": token_details,
             }
         )
 
@@ -176,8 +257,6 @@ def transcribe(
 
     return_code = process.wait()
 
-    # whisper.cpp は警告レベルでも非ゼロ終了することがある。
-    # JSON 出力が生成されていればそちらを優先して読み取る。
     if json_path.exists():
         return _parse_transcription_json(json_path)
 

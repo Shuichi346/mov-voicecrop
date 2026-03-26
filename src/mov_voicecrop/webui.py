@@ -46,6 +46,8 @@ def _build_ui_config(
     min_silence_duration: float,
     padding: float,
     min_confidence: float,
+    cut_unrecognized: bool,
+    unrecognized_threshold: float,
     video_encoder: str,
     fcpxml_target: str,
 ) -> AppConfig:
@@ -66,6 +68,8 @@ def _build_ui_config(
         min_silence_duration=min_silence_duration,
         padding=padding,
         min_confidence=min_confidence,
+        cut_unrecognized=cut_unrecognized,
+        unrecognized_threshold=unrecognized_threshold,
         video_encoder=video_encoder,
         fcpxml_target=fcpxml_target,
     )
@@ -174,8 +178,26 @@ def launch_webui(config: AppConfig) -> None:
                     minimum=0.0,
                     maximum=1.0,
                     step=0.05,
-                    label="最小信頼度",
+                    label="最小信頼度（セグメント全体の平均トークン確率）",
                     value=config.min_confidence,
+                )
+
+            with gr.Accordion("音声未認識区間の除外", open=True):
+                gr.Markdown(
+                    "叫び声・意味のない発音伸ばしなど、"
+                    "whisper が正しく認識できなかった区間を除外します。"
+                    "Vrew の「[？] 音声未認識区間も含めて調整」に相当します。"
+                )
+                cut_unrecognized = gr.Checkbox(
+                    label="音声未認識区間も含めてカット",
+                    value=config.cut_unrecognized,
+                )
+                unrecognized_threshold = gr.Slider(
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.05,
+                    label="未認識判定の閾値（この値未満のトークンを未認識とみなす）",
+                    value=config.unrecognized_threshold,
                 )
 
             with gr.Accordion("出力設定", open=True):
@@ -231,6 +253,8 @@ def launch_webui(config: AppConfig) -> None:
             min_silence_value: float,
             padding_value: float,
             min_confidence_value: float,
+            cut_unrecognized_value: bool,
+            unrecognized_threshold_value: float,
             video_encoder_value: str,
             fcpxml_target_value: str,
             progress: gr.Progress = gr.Progress(),
@@ -259,6 +283,8 @@ def launch_webui(config: AppConfig) -> None:
                 min_silence_duration=min_silence_value,
                 padding=padding_value,
                 min_confidence=min_confidence_value,
+                cut_unrecognized=cut_unrecognized_value,
+                unrecognized_threshold=unrecognized_threshold_value,
                 video_encoder=video_encoder_value,
                 fcpxml_target=fcpxml_target_value,
             )
@@ -268,6 +294,12 @@ def launch_webui(config: AppConfig) -> None:
             logs: list[str] = []
             logs.append(f"入力: {input_path}")
             logs.append(f"出力先: {effective_output_dir}")
+            if runtime_config.cut_unrecognized:
+                logs.append(
+                    f"音声未認識区間の除外: ON（閾値: {runtime_config.unrecognized_threshold}）"
+                )
+            else:
+                logs.append("音声未認識区間の除外: OFF")
 
             def callback(current_progress: float, message: str) -> None:
                 logs.append(message)
@@ -296,6 +328,8 @@ def launch_webui(config: AppConfig) -> None:
             min_silence_value: float,
             padding_value: float,
             min_confidence_value: float,
+            cut_unrecognized_value: bool,
+            unrecognized_threshold_value: float,
             video_encoder_value: str,
             fcpxml_target_value: str,
         ) -> str:
@@ -312,6 +346,8 @@ def launch_webui(config: AppConfig) -> None:
                 min_silence_duration=min_silence_value,
                 padding=padding_value,
                 min_confidence=min_confidence_value,
+                cut_unrecognized=cut_unrecognized_value,
+                unrecognized_threshold=unrecognized_threshold_value,
                 video_encoder=video_encoder_value,
                 fcpxml_target=fcpxml_target_value,
             )
@@ -334,6 +370,8 @@ def launch_webui(config: AppConfig) -> None:
                 min_silence_duration,
                 padding,
                 min_confidence,
+                cut_unrecognized,
+                unrecognized_threshold,
                 video_encoder,
                 fcpxml_target,
             ],
@@ -354,6 +392,8 @@ def launch_webui(config: AppConfig) -> None:
                 min_silence_duration,
                 padding,
                 min_confidence,
+                cut_unrecognized,
+                unrecognized_threshold,
                 video_encoder,
                 fcpxml_target,
             ],
