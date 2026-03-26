@@ -12,7 +12,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**mov-voicecrop** は、`whisper.cpp` と `ffmpeg` を活用して、動画ファイルから発話区間のみを自動で抽出し、無音カットと字幕生成を同時に行うローカルツールです。Gradioによる直感的なWeb UIと、自動化に便利なCLIの両方を提供します。
+**mov-voicecrop** は、`whisper.cpp` と `ffmpeg` を活用して、動画ファイルから発話区間のみを自動で抽出し、無音カットと字幕生成を同時に行うローカルツールです。Gradioによる直感的なWeb UIと、自動化に便利なCLIの両方を提供します。Vrewという無音区間を自動カットしてくれる機能を備えたアプリケーションがあります。その機能の再現を目指しました。
 
 ## ✨ 主な機能
 

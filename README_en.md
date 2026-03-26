@@ -12,7 +12,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**mov-voicecrop** is a local tool that leverages `whisper.cpp` and `ffmpeg` to automatically extract voice segments from video files while simultaneously performing silence removal and subtitle generation. It provides both an intuitive Gradio Web UI and a convenient CLI for automation.
+**mov-voicecrop** is a local tool that leverages `whisper.cpp` and `ffmpeg` to automatically extract voice segments from video files while simultaneously performing silence removal and subtitle generation. It provides both an intuitive Gradio Web UI and a convenient CLI for automation. There is an application called Vrew that has a feature that automatically cuts silent sections. I aimed to recreate that functionality.
 
 ## ✨ Key Features
 
