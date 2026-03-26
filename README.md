@@ -29,6 +29,7 @@
 本プロジェクトを動作させるためには、以下のツールがシステムにインストールされている必要があります。
 
 - Python 3.11 以上
+- **[uv](https://docs.astral.sh/uv/)** (高速なPythonパッケージマネージャ)
 - `ffmpeg` および `ffprobe` (例: macOSの場合は `brew install ffmpeg`)
 - `git`, `cmake`, `curl`, `unzip` (whisper.cpp のビルドに必要)
 
@@ -36,7 +37,7 @@
 
 1. **リポジトリのクローン**
    ```bash
-   git clone https://github.com/Shuichi346/matome-site-generator
+   git clone https://github.com/Shuichi346/mov-voicecrop
    cd mov-voicecrop
    ```
 
@@ -48,11 +49,9 @@
    ```
 
 3. **Python 環境の構築**
-   仮想環境を作成し、依存関係をインストールします。
+   `uv` を使用して依存関係をインストールし、環境をセットアップします。
    ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate  # Windowsの場合は .venv\Scripts\activate
-   pip install -e .
+   uv sync
    ```
 
 4. **環境変数の設定**
@@ -63,14 +62,14 @@
 
 ## 📖 使い方
 
-mov-voicecrop は、Web UI または コマンドライン (CLI) のどちらからでも利用可能です。
+mov-voicecrop は、Web UI または コマンドライン (CLI) のどちらからでも利用可能です。実行には `uv run` を使用します。
 
 ### Web UI での実行
 
 Gradio を使用したブラウザベースのUIを起動します。
 
 ```bash
-python main.py webui
+uv run main.py webui
 ```
 
 起動後、コンソールに表示されるローカルURL (例: `http://127.0.0.1:7860`) にブラウザでアクセスしてください。
@@ -81,7 +80,7 @@ UI上から入力動画の指定、無音検出・音声認識のパラメータ
 コマンドラインから直接処理を実行することも可能です。バッチ処理などに便利です。
 
 ```bash
-python main.py cli -i /path/to/input.mp4
+uv run main.py cli -i /path/to/input.mp4
 ```
 
 **主なCLIオプション:**
@@ -95,7 +94,7 @@ python main.py cli -i /path/to/input.mp4
 
 すべてのオプションを確認するには、ヘルプコマンドを実行してください：
 ```bash
-python main.py cli --help
+uv run main.py cli --help
 ```
 
 ## 📁 出力ファイル構成
