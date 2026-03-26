@@ -12,6 +12,7 @@ from mov_voicecrop.config import (
     AppConfig,
     PROJECT_ROOT,
     load_config,
+    normalize_user_path,
     resolve_output_dir,
 )
 from mov_voicecrop.exporter_fcpxml import export_fcpxml
@@ -206,7 +207,7 @@ def build_parser() -> argparse.ArgumentParser:
 def run_cli(args: argparse.Namespace) -> None:
     """CLI 処理を実行する。"""
     config = load_config(cli_args=args)
-    input_path = Path(args.input).expanduser().resolve()
+    input_path = Path(normalize_user_path(args.input)).expanduser().resolve()
     if not input_path.exists():
         raise FileNotFoundError(f"入力動画が見つかりません: {input_path}")
 

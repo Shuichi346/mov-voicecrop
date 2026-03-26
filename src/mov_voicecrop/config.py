@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -111,8 +112,59 @@ CLI_ARG_MAP = {
 }
 
 
+def normalize_user_path(value: str | Path) -> str:
+    """Web UI などで入力されたパス文字列を正規化する。
+
+    macOS のターミナルからコピーした shell 形式のパス
+    例: '/Users/name/My\ File.mp4'
+    を通常のパス文字列へ戻す。
+    """
+    text = str(value).strip()
+    if not text:
+        return text
+
+    while len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        text = text[1:-1].strip()
+
+    shell_like = (
+        ("/" in text or text.startswith(("~", ".")))
+        and ("\\" in text or "'" in text or '"' in text)
+    )
+    if not shell_like:
+        return text
+
+    try:
+        tokens = shlex.split(text, posix=True)
+    except ValueError:
+        tokens = []
+
+    if len(tokens) == 1:
+        return tokens[0]
+
+    unescaped: list[str] = []
+    escaping = False
+
+    for char in text:
+        if escaping:
+            unescaped.append(char)
+            escaping = False
+            continue
+
+        if char == "\\":
+            escaping = True
+            continue
+
+        unescaped.append(char)
+
+    if escaping:
+        unescaped.append("\\")
+
+    return "".join(unescaped)
+
+
 def _resolve_path(value: str | Path) -> Path:
-    path = Path(value).expanduser()
+    normalized = normalize_user_path(value)
+    path = Path(normalized).expanduser()
     if not path.is_absolute():
         path = PROJECT_ROOT / path
     return path.resolve()

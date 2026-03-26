@@ -12,6 +12,7 @@ from mov_voicecrop.cli import execute_pipeline
 from mov_voicecrop.config import (
     AppConfig,
     build_config_from_overrides,
+    normalize_user_path,
     resolve_output_dir,
     save_settings,
 )
@@ -201,7 +202,7 @@ def launch_webui(config: AppConfig) -> None:
             if not is_default:
                 return current_output_dir
 
-            cleaned = raw_path.strip()
+            cleaned = normalize_user_path(raw_path)
             if not cleaned:
                 return _OUTPUT_DIR_AUTO
 
@@ -234,10 +235,11 @@ def launch_webui(config: AppConfig) -> None:
             fcpxml_target_value: str,
             progress: gr.Progress = gr.Progress(),
         ) -> tuple[str, list[str]]:
-            if not raw_input_path or not raw_input_path.strip():
+            normalized_input_path = normalize_user_path(raw_input_path)
+            if not normalized_input_path:
                 raise gr.Error("入力動画のパスを指定してください。")
 
-            input_path = Path(raw_input_path.strip()).expanduser().resolve()
+            input_path = Path(normalized_input_path).expanduser().resolve()
 
             if not input_path.exists():
                 raise gr.Error(f"入力動画が見つかりません: {input_path}")
